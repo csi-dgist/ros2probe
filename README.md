@@ -352,3 +352,18 @@ ros2probe/
         ├── recorder/     # MCAP writer
         └── runtime/      # Main event loop, observers
 ```
+
+---
+
+## Contact
+
+ros2probe is developed at the **DGIST CSI Lab**. For questions about the design,
+collaboration proposals, bug reports that don't fit a GitHub issue, or anything
+else related to the project or the accompanying paper, feel free to reach out:
+
+- Sanghoon Lee — leesh2913@dgist.ac.kr
+- Jisang Yu — julienyu@dgist.ac.kr
+
+GitHub issues are still the preferred channel for reproducible bugs and feature
+requests so the discussion stays public.
+
