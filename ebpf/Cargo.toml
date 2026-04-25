@@ -1,0 +1,21 @@
+[package]
+name = "ros2probe-ebpf"
+version = "0.1.0"
+edition.workspace = true
+# Dual-licensed so the program can declare GPL to the kernel BPF verifier (and
+# thus use GPL-only helpers) while remaining usable under Apache-2.0 like the
+# rest of the workspace. Same model as Cilium et al.
+license = "GPL-2.0 OR Apache-2.0"
+
+[dependencies]
+ros2probe-common = { path = "../common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "ros2probe"
+path = "src/main.rs"

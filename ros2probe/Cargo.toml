@@ -1,0 +1,67 @@
+[package]
+name = "ros2probe"
+version = "0.1.0"
+edition.workspace = true
+default-run = "rp"
+
+license.workspace = true
+
+[features]
+default = ["gui"]
+# Compile the egui dashboard and the `rp gui` subcommand. Disable with
+# `--no-default-features` (or `--no-default-features --features ""`) for a
+# minimal `rp run`/CLI build that doesn't pull in eframe + rfd.
+gui = ["dep:eframe", "dep:rfd"]
+
+[dependencies]
+ros2probe-common = { path = "../common", features = ["user"] }
+
+anyhow = { workspace = true, default-features = true }
+arc-swap = "1"
+aya = { workspace = true }
+base64 = "0.22.1"
+bytes = "1"
+chrono = { version = "0.4.42", default-features = true, features = ["clock"] }
+clap = { workspace = true, features = ["derive"] }
+dxr = { version = "0.8.0", features = ["derive"] }
+dxr_client = { version = "0.8.0", features = ["reqwest"] }
+eframe = { version = "0.31.1", optional = true }
+rfd = { version = "0.15", default-features = false, features = ["gtk3"], optional = true }
+env_logger = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+mcap = "0.24.0"
+netring = "0.2.0"
+reqwest = { version = "0.12.28", default-features = true }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_yaml = "0.9.34"
+tokio = { workspace = true, features = [
+    "macros",
+    "rt",
+    "rt-multi-thread",
+    "net",
+    "signal",
+] }
+[build-dependencies]
+anyhow = { workspace = true }
+aya-build = { workspace = true }
+cargo_metadata = { workspace = true }
+# TODO(https://github.com/rust-lang/cargo/issues/12375): this should be an artifact dependency, but
+# it's not possible to tell cargo to use `-Z build-std` to build it. We cargo-in-cargo in the build
+# script to build this, but we want to teach cargo about the dependency so that cache invalidation
+# works properly.
+#
+# Note also that https://github.com/rust-lang/cargo/issues/10593 occurs when `target = ...` is added
+# to an artifact dependency; it seems possible to work around that by setting `resolver = "1"` in
+# Cargo.toml in the workspace root.
+#
+# Finally note that *any* usage of `artifact = ...` in *any* Cargo.toml in the workspace breaks
+# workflows with stable cargo; stable cargo outright refuses to load manifests that use unstable
+# features.
+ros2probe-ebpf = { path = "../ebpf" }
+
+[[bin]]
+name = "rp"
+path = "src/bin/rp.rs"
+
