@@ -67,8 +67,6 @@ pub struct TopicListRequest {
     pub count_only: bool,
     #[serde(default)]
     pub verbose: bool,
-    #[serde(default)]
-    pub include_hidden: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -464,6 +462,9 @@ pub struct TopicInfo {
     pub type_names: Vec<String>,
     pub publisher_count: usize,
     pub subscription_count: usize,
+    /// True when no publisher or subscriber for this topic was seen from a remote IP.
+    #[serde(default)]
+    pub local_only: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

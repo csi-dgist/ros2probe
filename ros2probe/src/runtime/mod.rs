@@ -208,18 +208,22 @@ pub async fn run(_config: RuntimeConfig) -> anyhow::Result<()> {
                     &recorder_handle,
                 )?;
 
-                handle_runtime_commands(
-                    &runtime_command_rx,
-                    &mut recording_session,
-                    &mut topic_bw_session,
-                    &mut topic_delay_session,
-                    &mut topic_echo_session,
-                    &mut topic_hz_session,
-                    &mut gid_map,
-                    &mut shadow_subs,
-                    &discovery_table,
-                    &recorder_handle,
-                )?;
+                {
+                    let rp = remote_participants.lock().unwrap_or_else(|e| e.into_inner());
+                    handle_runtime_commands(
+                        &runtime_command_rx,
+                        &mut recording_session,
+                        &mut topic_bw_session,
+                        &mut topic_delay_session,
+                        &mut topic_echo_session,
+                        &mut topic_hz_session,
+                        &mut gid_map,
+                        &mut shadow_subs,
+                        &discovery_table,
+                        &recorder_handle,
+                        &rp,
+                    )?;
+                }
             }
             _ = discovery_sweep.tick() => {
                 let now = std::time::SystemTime::now();
@@ -240,15 +244,19 @@ pub async fn run(_config: RuntimeConfig) -> anyhow::Result<()> {
                         topic_echo_session.as_ref(),
                         topic_hz_session.as_ref(),
                     )?;
-                    sync_shadow_subs(
-                        &mut shadow_subs,
-                        recording_session.as_ref(),
-                        topic_bw_session.as_ref(),
-                        topic_delay_session.as_ref(),
-                        topic_echo_session.as_ref(),
-                        topic_hz_session.as_ref(),
-                        &discovery_table,
-                    );
+                    {
+                        let rp = remote_participants.lock().unwrap_or_else(|e| e.into_inner());
+                        sync_shadow_subs(
+                            &mut shadow_subs,
+                            recording_session.as_ref(),
+                            topic_bw_session.as_ref(),
+                            topic_delay_session.as_ref(),
+                            topic_echo_session.as_ref(),
+                            topic_hz_session.as_ref(),
+                            &discovery_table,
+                            &rp,
+                        );
+                    }
                     state::refresh_from_discovery(&topic_list_state, &discovery_table, &node_table, &remote_participants);
                 }
             }

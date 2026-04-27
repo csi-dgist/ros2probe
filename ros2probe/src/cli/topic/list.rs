@@ -3,9 +3,7 @@ use clap::Args;
 
 use crate::{
     client::send_request,
-    command::protocol::{
-        CommandRequest, CommandResponse, TopicDetails, TopicInfo, TopicInfoRequest, TopicListRequest,
-    },
+    command::protocol::{CommandRequest, CommandResponse, TopicInfo, TopicListRequest},
 };
 
 #[derive(Debug, Args)]
@@ -21,10 +19,6 @@ pub struct TopicListCommand {
     /// List full details about each topic
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
-
-    /// Include hidden topics (e.g. action sub-topics under /_action/)
-    #[arg(short = 'a', long = "include-hidden-topics")]
-    pub include_hidden: bool,
 }
 
 pub fn run(args: TopicListCommand) -> anyhow::Result<()> {
@@ -32,7 +26,6 @@ pub fn run(args: TopicListCommand) -> anyhow::Result<()> {
         show_types: args.show_types,
         count_only: args.count_only,
         verbose: args.verbose,
-        include_hidden: args.include_hidden,
     }))?;
 
     match response {
@@ -47,42 +40,20 @@ pub fn run(args: TopicListCommand) -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            // Split into: needs detail fetch (passed name+subscriber filter) vs already internal
-            let mut needs_fetch: Vec<&TopicInfo> = Vec::new();
+            let mut external: Vec<&TopicInfo> = Vec::new();
             let mut internal: Vec<&TopicInfo> = Vec::new();
             for topic in &response.topics {
-                if passes_name_filter(&topic.name) && topic.subscription_count > 0 {
-                    needs_fetch.push(topic);
-                } else {
+                if topic.local_only {
                     internal.push(topic);
+                } else {
+                    external.push(topic);
                 }
             }
 
-            // Fetch local_only for candidates in parallel
-            let handles: Vec<_> = needs_fetch
-                .iter()
-                .map(|t| {
-                    let name = t.name.clone();
-                    std::thread::spawn(move || fetch_topic_details(&name))
-                })
-                .collect();
-
-            let mut recordable: Vec<&TopicInfo> = Vec::new();
-            for (topic, handle) in needs_fetch.iter().zip(handles) {
-                let details = handle.join().ok().flatten();
-                let local_only = details.as_ref().map(|d| d.local_only).unwrap_or(false);
-                if local_only {
-                    internal.push(topic);
-                } else {
-                    recordable.push(topic);
-                }
-            }
-
-            // internal may be out of order after appending; sort both by name
-            recordable.sort_by(|a, b| a.name.cmp(&b.name));
+            external.sort_by(|a, b| a.name.cmp(&b.name));
             internal.sort_by(|a, b| a.name.cmp(&b.name));
 
-            for topic in &recordable {
+            for topic in &external {
                 if args.show_types {
                     println!("{} [{}]", topic.name, format_types(&topic.type_names));
                 } else {
@@ -106,28 +77,6 @@ pub fn run(args: TopicListCommand) -> anyhow::Result<()> {
         }
         CommandResponse::Error(error) => bail!(error.message),
         _ => bail!("unexpected response for topic list request"),
-    }
-}
-
-fn passes_name_filter(name: &str) -> bool {
-    if name == "/tf" || name == "/tf_static" {
-        return false;
-    }
-    if name.ends_with("/parameter_events") || name == "/rosout" {
-        return false;
-    }
-    if name.split('/').any(|seg| !seg.is_empty() && seg.starts_with('_')) {
-        return false;
-    }
-    true
-}
-
-fn fetch_topic_details(topic_name: &str) -> Option<TopicDetails> {
-    match send_request(CommandRequest::TopicInfo(TopicInfoRequest {
-        topic_name: topic_name.to_string(),
-    })) {
-        Ok(CommandResponse::TopicInfo(r)) => r.topic,
-        _ => None,
     }
 }
 

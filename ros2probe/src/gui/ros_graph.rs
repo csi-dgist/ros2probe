@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::Write as IoWrite;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
 
 use eframe::egui;
 
@@ -27,33 +29,53 @@ impl Default for GraphFilter {
     }
 }
 
-/// Returns true if a topic name would survive all default graph filters (tf, params, debug).
-/// Does not check subscriber count — use `is_recordable_topic` for full classification.
-pub fn is_recordable_topic_name(name: &str) -> bool {
-    if name == "/tf" || name == "/tf_static" {
-        return false;
-    }
-    if name.ends_with("/parameter_events") || name == "/rosout" {
-        return false;
-    }
-    if name.split('/').any(|seg| !seg.is_empty() && seg.starts_with('_')) {
-        return false;
-    }
-    true
-}
-
-/// Returns true if the topic is recordable: survives all graph filters and has subscribers.
-/// Local-only (SHM) topics are recordable because shadow subscribers force them onto loopback UDP.
+/// Returns true if the topic is external: visible on a non-loopback network interface.
+/// Topics communicated exclusively over shared memory or loopback are internal.
 pub fn is_recordable_topic(name: &str, graph: &GraphSnapshot) -> bool {
-    if !is_recordable_topic_name(name) {
-        return false;
-    }
     graph
         .topics
         .iter()
         .find(|t| t.name == name)
-        .map(|t| !t.subscribers.is_empty())
+        .map(|t| !t.local_only)
         .unwrap_or(false)
+}
+
+/// Runs `compute_graph_layout` on a background thread so the UI thread is
+/// never blocked by the `dot` process. Submit a filtered `GraphSnapshot` with
+/// `submit`; call `poll` on each frame to collect the result when ready.
+pub struct LayoutWorker {
+    tx: mpsc::Sender<GraphSnapshot>,
+    rx: mpsc::Receiver<Option<LayoutedGraph>>,
+}
+
+impl LayoutWorker {
+    pub fn new() -> Self {
+        let (in_tx, in_rx) = mpsc::channel::<GraphSnapshot>();
+        let (out_tx, out_rx) = mpsc::channel();
+        thread::spawn(move || {
+            while let Ok(mut graph) = in_rx.recv() {
+                // Drain queued snapshots — only process the most recent one.
+                while let Ok(newer) = in_rx.try_recv() {
+                    graph = newer;
+                }
+                if out_tx.send(compute_graph_layout(&graph)).is_err() {
+                    break;
+                }
+            }
+        });
+        Self { tx: in_tx, rx: out_rx }
+    }
+
+    /// Submit a new graph for layout. Non-blocking; older pending work is
+    /// discarded by the worker in favour of the latest snapshot.
+    pub fn submit(&self, graph: GraphSnapshot) {
+        let _ = self.tx.send(graph);
+    }
+
+    /// Returns a completed layout if one is ready, otherwise `None`.
+    pub fn poll(&self) -> Option<Option<LayoutedGraph>> {
+        self.rx.try_recv().ok()
+    }
 }
 
 /// Applies `filter` to `snapshot` and returns a new filtered `GraphSnapshot`.

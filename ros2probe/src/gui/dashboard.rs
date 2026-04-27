@@ -18,7 +18,7 @@ use crate::{
 };
 
 use super::ros_graph::{
-    apply_filter, compute_graph_layout, render_graph_filter_bar, render_ros_graph, GraphFilter,
+    apply_filter, render_graph_filter_bar, render_ros_graph, GraphFilter, LayoutWorker,
     LayoutedGraph,
 };
 
@@ -38,6 +38,7 @@ pub struct DashboardPage {
     connection_status: ConnectionStatus,
     discover_rx: Option<mpsc::Receiver<bool>>,
     discover_feedback: Option<(Instant, &'static str)>,
+    layout_worker: LayoutWorker,
 }
 
 enum WorkerEvent {
@@ -134,10 +135,15 @@ impl DashboardPage {
             connection_status: ConnectionStatus::Connecting,
             discover_rx: None,
             discover_feedback: None,
+            layout_worker: LayoutWorker::new(),
         }
     }
 
     pub fn show(&mut self, ctx: &egui::Context, graph_filter: &mut GraphFilter) {
+        // Poll for completed graph layout first so it's available this frame.
+        if let Some(layout) = self.layout_worker.poll() {
+            self.snapshot.layout = layout;
+        }
         self.drain_worker_events(graph_filter);
         self.drain_discover_result();
         self.render(ctx, graph_filter);
@@ -170,7 +176,7 @@ impl DashboardPage {
                 WorkerEvent::RosUpdated { ros, raw_graph } => {
                     self.snapshot.ros = ros;
                     let filtered = apply_filter(&raw_graph, graph_filter);
-                    self.snapshot.layout = compute_graph_layout(&filtered);
+                    self.layout_worker.submit(filtered.clone());
                     self.snapshot.graph = filtered;
                     self.snapshot.raw_graph = raw_graph;
                     self.snapshot.last_error = None;
@@ -295,7 +301,7 @@ impl DashboardPage {
                 dashboard_frame_with_meta(ui, "ROS Graph", &ros_meta, |ui| {
                     if render_graph_filter_bar(ui, graph_filter) {
                         let filtered = apply_filter(&self.snapshot.raw_graph, graph_filter);
-                        self.snapshot.layout = compute_graph_layout(&filtered);
+                        self.layout_worker.submit(filtered.clone());
                         self.snapshot.graph = filtered;
                     }
                     render_ros_graph(ui, self.snapshot.layout.as_ref(), &self.snapshot.graph);

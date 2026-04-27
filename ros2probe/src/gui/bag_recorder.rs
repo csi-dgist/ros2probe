@@ -72,7 +72,7 @@ impl BagRecorderPage {
             event_rx,
             output_path: String::new(),
             file_dialog_rx: None,
-            all_topics: true,
+            all_topics: false,
             topic_filter: String::new(),
             available_topics: Vec::new(),
             internal_topics: Vec::new(),

@@ -23,8 +23,8 @@ use crate::{
 
 use super::dashboard::{fetch_graph_snapshot, GraphSnapshot};
 use super::ros_graph::{
-    apply_filter, compute_graph_layout, is_recordable_topic, render_graph_filter_bar,
-    render_ros_graph_selectable, GraphFilter, LayoutedGraph,
+    apply_filter, is_recordable_topic, render_graph_filter_bar,
+    render_ros_graph_selectable, GraphFilter, LayoutWorker, LayoutedGraph,
 };
 
 const PAGE_BG: egui::Color32 = egui::Color32::from_rgb(230, 232, 236);
@@ -57,6 +57,7 @@ pub struct TopicMonitorPage {
     raw_graph: GraphSnapshot,
     graph: GraphSnapshot,
     layout: Option<LayoutedGraph>,
+    layout_worker: LayoutWorker,
     echo_enabled: bool,
     echo_messages: VecDeque<String>,
     internal_topics_open: bool,
@@ -155,6 +156,7 @@ impl TopicMonitorPage {
             raw_graph: GraphSnapshot::default(),
             graph: GraphSnapshot::default(),
             layout: None,
+            layout_worker: LayoutWorker::new(),
             echo_enabled: false,
             echo_messages: VecDeque::new(),
             internal_topics_open: false,
@@ -162,6 +164,9 @@ impl TopicMonitorPage {
     }
 
     pub fn show(&mut self, ctx: &egui::Context, graph_filter: &mut GraphFilter) {
+        if let Some(layout) = self.layout_worker.poll() {
+            self.layout = layout;
+        }
         let drained = self.drain_events(graph_filter);
         self.render(ctx, graph_filter);
         let next = if drained || self.echo_enabled || self.selected_topic.is_some() {
@@ -238,7 +243,7 @@ impl TopicMonitorPage {
                 }
                 MonitorEvent::GraphUpdated(raw_graph) => {
                     let filtered = apply_filter(&raw_graph, graph_filter);
-                    self.layout = compute_graph_layout(&filtered);
+                    self.layout_worker.submit(filtered.clone());
                     self.graph = filtered;
                     self.raw_graph = raw_graph;
                 }
@@ -456,7 +461,7 @@ impl TopicMonitorPage {
                     // Filter bar above graph
                     if render_graph_filter_bar(ui, graph_filter) {
                         let filtered = apply_filter(&self.raw_graph, graph_filter);
-                        self.layout = compute_graph_layout(&filtered);
+                        self.layout_worker.submit(filtered.clone());
                         self.graph = filtered;
                     }
                     // Show ROS graph; click on a topic node selects it
@@ -1186,7 +1191,6 @@ fn fetch_topic_list() -> anyhow::Result<Vec<String>> {
         show_types: false,
         count_only: false,
         verbose: false,
-        include_hidden: false,
     }))? {
         CommandResponse::TopicList(response) => {
             let mut names: Vec<String> = response.topics.iter().map(|t| t.name.clone()).collect();
