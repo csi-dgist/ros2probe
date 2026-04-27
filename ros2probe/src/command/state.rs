@@ -90,15 +90,11 @@ pub fn refresh_from_discovery(
     let action_details = build_action_details(discovery_table, node_table);
     let node_details = build_node_details(discovery_table, node_table);
     let services = build_services(&node_details);
-    let topics = topic_views
-        .iter()
-        .cloned()
-        .filter_map(topic_info_from_view)
-        .collect::<Vec<_>>();
     let topic_details = topic_views
         .into_iter()
         .filter_map(|topic| topic_details_from_view(discovery_table, node_table, topic, &rp))
         .collect::<Vec<_>>();
+    let topics = topic_details.iter().map(topic_info_from_details).collect::<Vec<_>>();
     // Build the new snapshot locally, then publish atomically. Concurrent
     // readers that loaded the old Arc continue to hold it until they drop.
     state.store(Arc::new(CommandState {
@@ -127,21 +123,14 @@ fn full_node_name(namespace: &str, name: &str) -> String {
     }
 }
 
-fn topic_info_from_view(topic: TopicView) -> Option<TopicInfo> {
-    if topic.topic_name.starts_with("rq/") || topic.topic_name.starts_with("rr/") {
-        return None;
+fn topic_info_from_details(details: &TopicDetails) -> TopicInfo {
+    TopicInfo {
+        name: details.name.clone(),
+        type_names: details.type_names.clone(),
+        publisher_count: details.publisher_count,
+        subscription_count: details.subscription_count,
+        local_only: details.local_only,
     }
-    let name = normalize_topic_name(&topic.topic_name)?;
-    Some(TopicInfo {
-        name,
-        type_names: topic
-            .type_names
-            .into_iter()
-            .map(|type_name| normalize_type_name(&type_name))
-            .collect(),
-        publisher_count: topic.publisher_count,
-        subscription_count: topic.subscription_count,
-    })
 }
 
 fn topic_details_from_view(

@@ -3,18 +3,11 @@ use crate::command::{
     state::CommandState,
 };
 
-pub fn build_response(request: TopicListRequest, state: CommandState) -> TopicListResponse {
+pub fn build_response(_request: TopicListRequest, state: CommandState) -> TopicListResponse {
     let topics = state
         .topics
         .into_iter()
-        .filter(|topic| {
-            if request.include_hidden {
-                true
-            } else {
-                !is_hidden_topic(&topic.name)
-                    && topic.type_names.iter().any(|t| t.contains("/msg/"))
-            }
-        })
+        .filter(|topic| topic.type_names.iter().any(|t| t.contains("/msg/")))
         .collect::<Vec<_>>();
     TopicListResponse {
         total_count: topics.len(),

@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 
 use log::warn;
+use ros2probe_common::TopicGid;
 
 use crate::{
     command::protocol::{
@@ -120,6 +121,7 @@ pub(super) fn handle_runtime_commands(
     shadow_subs: &mut HashMap<String, ShadowSubscriber>,
     discovery_table: &DiscoveryTable,
     recorder_handle: &RecorderHandle,
+    remote_participants: &HashSet<TopicGid>,
 ) -> anyhow::Result<()> {
     while let Ok(command) = runtime_command_rx.try_recv() {
         match command {
@@ -132,7 +134,7 @@ pub(super) fn handle_runtime_commands(
                     recorder_handle,
                 );
                 if result.is_ok() {
-                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref());
+                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref(), remote_participants);
                 }
                 let _ = reply.send(match result {
                     Ok(response) => RuntimeReply::BagStarted(response),
@@ -152,7 +154,7 @@ pub(super) fn handle_runtime_commands(
             RuntimeCommand::BagStop { reply } => {
                 let result = bag::stop_recording(recording_session, gid_map, recorder_handle);
                 if result.is_ok() {
-                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref());
+                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref(), remote_participants);
                 }
                 let _ = reply.send(match result {
                     Ok(response) => RuntimeReply::BagStopped(response),
@@ -162,7 +164,7 @@ pub(super) fn handle_runtime_commands(
             RuntimeCommand::TopicBwStart { request, reply } => {
                 let result = observers::bw_start_session(request, topic_bw_session);
                 if result.is_ok() {
-                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref());
+                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref(), remote_participants);
                 }
                 let _ = reply.send(match result {
                     Ok(response) => RuntimeReply::TopicBwStarted(response),
@@ -176,7 +178,7 @@ pub(super) fn handle_runtime_commands(
             }
             RuntimeCommand::TopicBwStop { reply } => {
                 let response = observers::bw_stop_session(topic_bw_session);
-                sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref());
+                sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref(), remote_participants);
                 let _ = reply.send(match response {
                     Ok(response) => RuntimeReply::TopicBwStopped(response),
                     Err(err) => RuntimeReply::Error(err.to_string()),
@@ -185,7 +187,7 @@ pub(super) fn handle_runtime_commands(
             RuntimeCommand::TopicDelayStart { request, reply } => {
                 let result = observers::delay_start_session(request, topic_delay_session);
                 if result.is_ok() {
-                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref());
+                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref(), remote_participants);
                 }
                 let _ = reply.send(match result {
                     Ok(response) => RuntimeReply::TopicDelayStarted(response),
@@ -199,7 +201,7 @@ pub(super) fn handle_runtime_commands(
             }
             RuntimeCommand::TopicDelayStop { reply } => {
                 let response = observers::delay_stop_session(topic_delay_session);
-                sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref());
+                sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref(), remote_participants);
                 let _ = reply.send(match response {
                     Ok(response) => RuntimeReply::TopicDelayStopped(response),
                     Err(err) => RuntimeReply::Error(err.to_string()),
@@ -208,7 +210,7 @@ pub(super) fn handle_runtime_commands(
             RuntimeCommand::TopicEchoStart { request, reply } => {
                 let result = observers::echo_start_session(request, topic_echo_session);
                 if result.is_ok() {
-                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref());
+                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref(), remote_participants);
                 }
                 let _ = reply.send(match result {
                     Ok(response) => RuntimeReply::TopicEchoStarted(response),
@@ -220,7 +222,7 @@ pub(super) fn handle_runtime_commands(
             }
             RuntimeCommand::TopicEchoStop { reply } => {
                 let response = observers::echo_stop_session(topic_echo_session);
-                sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref());
+                sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref(), remote_participants);
                 let _ = reply.send(match response {
                     Ok(response) => RuntimeReply::TopicEchoStopped(response),
                     Err(err) => RuntimeReply::Error(err.to_string()),
@@ -229,7 +231,7 @@ pub(super) fn handle_runtime_commands(
             RuntimeCommand::TopicHzStart { request, reply } => {
                 let result = observers::hz_start_session(request, topic_hz_session);
                 if result.is_ok() {
-                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref());
+                    sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref(), remote_participants);
                 }
                 let _ = reply.send(match result {
                     Ok(response) => RuntimeReply::TopicHzStarted(response),
@@ -249,7 +251,7 @@ pub(super) fn handle_runtime_commands(
             }
             RuntimeCommand::TopicHzStop { reply } => {
                 let response = observers::hz_stop_session(topic_hz_session);
-                sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref());
+                sync_filter_and_shadow(gid_map, shadow_subs, discovery_table, recording_session.as_ref(), topic_bw_session.as_ref(), topic_delay_session.as_ref(), topic_echo_session.as_ref(), topic_hz_session.as_ref(), remote_participants);
                 let _ = reply.send(match response {
                     Ok(response) => RuntimeReply::TopicHzStopped(response),
                     Err(err) => RuntimeReply::Error(err.to_string()),
@@ -272,6 +274,7 @@ fn sync_filter_and_shadow(
     topic_delay_session: Option<&TopicDelaySession>,
     topic_echo_session: Option<&TopicEchoSession>,
     topic_hz_session: Option<&TopicHzSession>,
+    remote_participants: &HashSet<TopicGid>,
 ) {
     let _ = sync_topic_filter(
         gid_map,
@@ -290,6 +293,7 @@ fn sync_filter_and_shadow(
         topic_echo_session,
         topic_hz_session,
         discovery_table,
+        remote_participants,
     );
 }
 
@@ -297,6 +301,9 @@ fn sync_filter_and_shadow(
 /// topics. Spawns a subscriber for any SHM-only topic that is being observed
 /// but has no subscriber yet, and drops subscribers for topics that are no
 /// longer observed.
+///
+/// Topics with at least one remote participant are skipped: data already flows
+/// over the network interface, so a shadow subscriber is not needed.
 ///
 /// Called from `mod.rs` (discovery sweep) and `command.rs` (Start/Stop
 /// commands) so that the map stays current whenever the session set changes or
@@ -310,15 +317,18 @@ pub(super) fn sync_shadow_subs(
     topic_echo_session: Option<&TopicEchoSession>,
     topic_hz_session: Option<&TopicHzSession>,
     discovery_table: &DiscoveryTable,
+    remote_participants: &HashSet<TopicGid>,
 ) {
     let mut wanted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let all_topics = recording_session.is_some_and(|s| s.topics.is_empty());
 
     if all_topics {
-        // bag record --all: pick up every SHM-only topic from the discovery table.
+        // bag record --all: pick up every SHM-only, local-only topic.
         for endpoint in discovery_table.publications().values() {
             if let Some(ros2) = endpoint.topic_name.as_deref().and_then(ShadowSubscriber::ros2_topic) {
-                if pub_needs_shadow(endpoint, discovery_table) {
+                if pub_needs_shadow(endpoint, discovery_table)
+                    && !topic_has_remote_participant(&ros2, discovery_table, remote_participants)
+                {
                     wanted.insert(ros2);
                 }
             }
@@ -334,7 +344,9 @@ pub(super) fn sync_shadow_subs(
         if let Some(s) = topic_hz_session     { candidates.push(s.topic_name()); }
 
         for topic in candidates {
-            if topic_has_shm_publisher(topic, discovery_table) {
+            if topic_has_shm_publisher(topic, discovery_table)
+                && !topic_has_remote_participant(topic, discovery_table, remote_participants)
+            {
                 wanted.insert(topic.to_string());
             }
         }
@@ -360,6 +372,27 @@ fn topic_has_shm_publisher(ros2_topic: &str, discovery_table: &DiscoveryTable) -
             .as_deref() == Some(ros2_topic)
             && pub_needs_shadow(endpoint, discovery_table)
     })
+}
+
+/// Returns true if any publisher or subscriber for `ros2_topic` belongs to a
+/// remote participant. When this is true, data already flows over the network
+/// interface and no shadow subscriber is needed.
+fn topic_has_remote_participant(
+    ros2_topic: &str,
+    discovery_table: &DiscoveryTable,
+    remote_participants: &HashSet<TopicGid>,
+) -> bool {
+    let matches_topic = |ep: &EndpointEntry| {
+        ep.topic_name.as_deref()
+            .and_then(ShadowSubscriber::ros2_topic)
+            .as_deref() == Some(ros2_topic)
+    };
+    let is_remote = |ep: &EndpointEntry| {
+        ep.participant_gid.map_or(false, |pgid| remote_participants.contains(&pgid))
+    };
+
+    discovery_table.publications().values().any(|ep| matches_topic(ep) && is_remote(ep))
+        || discovery_table.subscriptions().values().any(|ep| matches_topic(ep) && is_remote(ep))
 }
 
 fn pub_needs_shadow(endpoint: &EndpointEntry, discovery_table: &DiscoveryTable) -> bool {

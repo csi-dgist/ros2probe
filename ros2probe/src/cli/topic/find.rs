@@ -28,7 +28,6 @@ pub fn run(args: TopicFindCommand) -> anyhow::Result<()> {
         show_types: false,
         count_only: false,
         verbose: false,
-        include_hidden: false,
     });
     serde_json::to_writer(&mut stream, &request).context("serialize request")?;
     stream.write_all(b"\n").context("write request newline")?;

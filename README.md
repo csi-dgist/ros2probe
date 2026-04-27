@@ -103,6 +103,7 @@ cargo install bpf-linker                                # eBPF linker
 ### 3. Build
 
 ```sh
+git clone https://github.com/csi-dgist/ros2probe.git
 cd ros2probe
 
 # Full — runtime + CLI + GUI (default)
@@ -366,4 +367,3 @@ else related to the project or the accompanying paper, feel free to reach out:
 
 GitHub issues are still the preferred channel for reproducible bugs and feature
 requests so the discussion stays public.
-
