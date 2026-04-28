@@ -19,7 +19,7 @@ ros2probe attaches an eBPF socket filter to every non-loopback network interface
 │  │  • Passes only RTPS/DDS UDP packets, drops the rest │ │
 │  │  • Checks GID filter map to allow specific topics   │ │
 │  └──────────────────────┬──────────────────────────────┘ │
-│                         │ TPACKET_V3 ring buffer          │
+│                         │ TPACKET_V3 ring buffer         │
 │  ┌──────────────────────▼──────────────────────────────┐ │
 │  │  AF_PACKET socket (netring / TPACKET_V3)            │ │
 │  │  • Zero-copy batch reads from kernel ring buffer    │ │
@@ -29,9 +29,9 @@ ros2probe attaches an eBPF socket filter to every non-loopback network interface
 ┌─────────────────────────▼────────────────────────────────┐
 │  Runtime  (rp run)                                       │
 │  • IPv4/IPv6 fragment reassembly                         │
-│  • RTPS/SPDP/SEDP discovery reconstruction              │
+│  • RTPS/SPDP/SEDP discovery reconstruction               │
 │  • GID → node name mapping via ros_discovery_info        │
-│  • Topic graph: publishers, subscribers, SHM vs network │
+│  • Topic graph: publishers, subscribers, SHM vs network  │
 │  • Live hz / bw / delay / echo observers                 │
 │  • MCAP bag recorder                                     │
 │  • Command socket  /tmp/ros2probe.sock                   │
