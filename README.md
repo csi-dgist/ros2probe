@@ -80,11 +80,13 @@ ros2probe needs Rust ≥ 1.85 (edition 2024). Distro packages are usually too ol
 
 ### 1. System dependencies
 
+Always required (TLS for reqwest)
 ```sh
-# Always required (TLS for reqwest)
 sudo apt install -y pkg-config libssl-dev
+```
 
-# Only for the full (GUI) build — file dialog via rfd/gtk3
+Only for the full (GUI) build — file dialog via rfd/gtk3
+```sh
 sudo apt install -y libgtk-3-dev
 ```
 
@@ -100,30 +102,23 @@ cargo install bpf-linker                                # eBPF linker
 
 > **If you already had a distro Rust:** make sure `which cargo` points to `~/.cargo/bin/cargo`. Otherwise run `source "$HOME/.cargo/env"` or open a new shell.
 
-### 3. Build
-
+### 3. Clone
 ```sh
 git clone https://github.com/csi-dgist/ros2probe.git
 cd ros2probe
-
-# Full — runtime + CLI + GUI (default)
-cargo build
-
-# Minimal — runtime + CLI only (no eframe/egui/rfd, no `rp gui`)
-cargo build --no-default-features
 ```
 
-### 4. Install to `~/.cargo/bin`
+### 4. Build & Install
 
+Full — runtime + CLI + GUI (default)
 ```sh
-# Full
 cargo install --path ros2probe --bins
+```
 
-# Minimal
+Minimal — runtime + CLI only (no eframe/egui/rfd, no `rp gui`)
+```sh
 cargo install --path ros2probe --bins --no-default-features
 ```
-
----
 
 ## Quick Start
 
