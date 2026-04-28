@@ -100,30 +100,18 @@ cargo install bpf-linker                                # eBPF linker
 
 > **If you already had a distro Rust:** make sure `which cargo` points to `~/.cargo/bin/cargo`. Otherwise run `source "$HOME/.cargo/env"` or open a new shell.
 
-### 3. Build
+### 3. Build & Install
 
 ```sh
 git clone https://github.com/csi-dgist/ros2probe.git
 cd ros2probe
 
 # Full — runtime + CLI + GUI (default)
-cargo build
-
-# Minimal — runtime + CLI only (no eframe/egui/rfd, no `rp gui`)
-cargo build --no-default-features
-```
-
-### 4. Install to `~/.cargo/bin`
-
-```sh
-# Full
 cargo install --path ros2probe --bins
 
-# Minimal
+# Minimal — runtime + CLI only (no eframe/egui/rfd, no `rp gui`)
 cargo install --path ros2probe --bins --no-default-features
 ```
-
----
 
 ## Quick Start
 
