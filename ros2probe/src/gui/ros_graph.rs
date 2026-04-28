@@ -29,15 +29,28 @@ impl Default for GraphFilter {
     }
 }
 
-/// Returns true if the topic is external: visible on a non-loopback network interface.
-/// Topics communicated exclusively over shared memory or loopback are internal.
+/// Returns true if the topic is external (recordable): visible on a non-loopback
+/// network interface and not a ROS-internal or debug topic.
 pub fn is_recordable_topic(name: &str, graph: &GraphSnapshot) -> bool {
-    graph
-        .topics
-        .iter()
-        .find(|t| t.name == name)
-        .map(|t| !t.local_only)
-        .unwrap_or(false)
+    let Some(t) = graph.topics.iter().find(|t| t.name == name) else {
+        return false;
+    };
+    if t.local_only {
+        return false;
+    }
+    if name == "/tf" || name == "/tf_static" {
+        return false;
+    }
+    if name == "/rosout" || name.ends_with("/parameter_events") {
+        return false;
+    }
+    if name.split('/').any(|seg| !seg.is_empty() && seg.starts_with('_')) {
+        return false;
+    }
+    if t.subscribers.is_empty() {
+        return false;
+    }
+    true
 }
 
 /// Runs `compute_graph_layout` on a background thread so the UI thread is
