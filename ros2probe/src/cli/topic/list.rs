@@ -43,7 +43,7 @@ pub fn run(args: TopicListCommand) -> anyhow::Result<()> {
             let mut external: Vec<&TopicInfo> = Vec::new();
             let mut internal: Vec<&TopicInfo> = Vec::new();
             for topic in &response.topics {
-                if topic.local_only {
+                if is_internal_topic(topic) {
                     internal.push(topic);
                 } else {
                     external.push(topic);
@@ -102,6 +102,26 @@ fn print_verbose_topics(topics: &[TopicInfo]) {
             pluralize(topic.subscription_count, "subscriber", "subscribers"),
         );
     }
+}
+
+fn is_internal_topic(topic: &TopicInfo) -> bool {
+    if topic.local_only {
+        return true;
+    }
+    let name = &topic.name;
+    if name == "/tf" || name == "/tf_static" {
+        return true;
+    }
+    if name == "/rosout" || name.ends_with("/parameter_events") {
+        return true;
+    }
+    if name.split('/').any(|seg| !seg.is_empty() && seg.starts_with('_')) {
+        return true;
+    }
+    if topic.subscription_count == 0 {
+        return true;
+    }
+    false
 }
 
 fn format_types(type_names: &[String]) -> String {
