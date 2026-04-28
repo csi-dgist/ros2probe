@@ -1,5 +1,7 @@
 # ros2probe
 
+https://csi-dgist.github.io/ros2probe-page/
+
 Host-level observability for ROS 2 DDS traffic — without creating ROS 2 subscriptions.
 
 ros2probe attaches an eBPF socket filter to every non-loopback network interface, captures RTPS/DDS packets in the kernel, and reconstructs the full ROS graph, topic metrics, and message streams entirely in userspace. A CLI (`rp`) and a desktop GUI (`rp gui`) talk to the runtime over a Unix socket.
