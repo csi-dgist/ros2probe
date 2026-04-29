@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            artifact: rp-linux-x86_64
+            cross_pkg: ""
+
+          - target: aarch64-unknown-linux-gnu
+            artifact: rp-linux-aarch64
+            cross_pkg: gcc-aarch64-linux-gnu
+
+          - target: armv7-unknown-linux-gnueabihf
+            artifact: rp-linux-armv7
+            cross_pkg: gcc-arm-linux-gnueabihf
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm clang libelf-dev ${{ matrix.cross_pkg }}
+
+      - name: Install Rust toolchains
+        run: |
+          rustup toolchain install stable nightly
+          rustup component add rust-src --toolchain nightly
+          rustup target add ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-registry-
+
+      - name: Cache bpf-linker binary
+        id: cache-bpf-linker
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/bpf-linker
+          key: bpf-linker-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install bpf-linker
+        if: steps.cache-bpf-linker.outputs.cache-hit != 'true'
+        run: cargo install bpf-linker
+
+      - name: Build
+        run: |
+          cargo build --release --target ${{ matrix.target }} --no-default-features
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+
+      - name: Package binary
+        run: |
+          cp target/${{ matrix.target }}/release/rp ${{ matrix.artifact }}
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.artifact }}
+            install.sh
+          generate_release_notes: true
