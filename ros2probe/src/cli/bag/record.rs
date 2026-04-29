@@ -17,7 +17,6 @@ use crate::command::{
 use super::util::{info_log, send_request};
 
 #[derive(Debug, Args)]
-#[command(after_help = "NOTE: Internal topics (tf, rosout, parameter_events, debug topics, SHM-only) are not captured, even with --all.")]
 pub struct BagRecordCommand {
     /// List of topics to record
     #[arg(value_name = "TOPIC", required_unless_present = "all")]
