@@ -4,16 +4,28 @@ set -e
 REPO="csi-dgist/ros2probe"
 BIN="rp"
 INSTALL_DIR="/usr/local/bin"
+GUI=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --gui) GUI=1 ;;
+  esac
+done
 
 case "$(uname -m)" in
-  x86_64)  ARTIFACT="rp-linux-x86_64" ;;
-  aarch64) ARTIFACT="rp-linux-aarch64" ;;
-  armv7l)  ARTIFACT="rp-linux-armv7" ;;
+  x86_64)  BASE="rp-linux-x86_64" ;;
+  aarch64) BASE="rp-linux-aarch64" ;;
   *)
     echo "Unsupported architecture: $(uname -m)"
     exit 1
     ;;
 esac
+
+if [ "$GUI" = "1" ]; then
+  ARTIFACT="${BASE}-gui"
+else
+  ARTIFACT="$BASE"
+fi
 
 URL="https://github.com/${REPO}/releases/latest/download/${ARTIFACT}"
 

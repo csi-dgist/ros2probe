@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    name: Build (${{ matrix.target }})
+    name: Build (${{ matrix.artifact }})
     runs-on: ubuntu-24.04
 
     strategy:
@@ -20,22 +20,46 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             artifact: rp-linux-x86_64
             cross_pkg: ""
+            extra_pkg: ""
+            multiarch: ""
+            lib_dir: x86_64-linux-gnu
+            features: "--no-default-features"
+
+          - target: x86_64-unknown-linux-gnu
+            artifact: rp-linux-x86_64-gui
+            cross_pkg: ""
+            extra_pkg: libgtk-3-dev
+            multiarch: ""
+            lib_dir: x86_64-linux-gnu
+            features: ""
 
           - target: aarch64-unknown-linux-gnu
             artifact: rp-linux-aarch64
             cross_pkg: gcc-aarch64-linux-gnu
+            extra_pkg: ""
+            multiarch: ""
+            lib_dir: aarch64-linux-gnu
+            features: "--no-default-features"
 
-          - target: armv7-unknown-linux-gnueabihf
-            artifact: rp-linux-armv7
-            cross_pkg: gcc-arm-linux-gnueabihf
+          - target: aarch64-unknown-linux-gnu
+            artifact: rp-linux-aarch64-gui
+            cross_pkg: gcc-aarch64-linux-gnu
+            extra_pkg: "libgtk-3-dev:arm64"
+            multiarch: arm64
+            lib_dir: aarch64-linux-gnu
+            features: ""
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Add multiarch support
+        if: matrix.multiarch != ''
+        run: sudo dpkg --add-architecture ${{ matrix.multiarch }}
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm clang libelf-dev ${{ matrix.cross_pkg }}
+          sudo apt-get install -y llvm clang libelf-dev ${{ matrix.cross_pkg }} ${{ matrix.extra_pkg }}
 
       - name: Install Rust toolchains
         run: |
@@ -65,15 +89,15 @@ jobs:
         run: cargo install bpf-linker
 
       - name: Build
-        run: |
-          cargo build --release --target ${{ matrix.target }} --no-default-features
+        run: cargo build --release --target ${{ matrix.target }} ${{ matrix.features }}
         env:
+          OPENSSL_VENDORED: "1"
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: /usr/lib/${{ matrix.lib_dir }}/pkgconfig
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
 
       - name: Package binary
-        run: |
-          cp target/${{ matrix.target }}/release/rp ${{ matrix.artifact }}
+        run: cp target/${{ matrix.target }}/release/rp ${{ matrix.artifact }}
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2

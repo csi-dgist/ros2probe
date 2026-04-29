@@ -77,12 +77,14 @@ ros2probe attaches an eBPF socket filter to every non-loopback network interface
 No Rust, no compiler, no build dependencies required — just download and run.
 
 ```sh
+# CLI only (default)
 curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/install.sh | sh
+
+# CLI + GUI
+curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/install.sh | sh -s -- --gui
 ```
 
-Automatically detects your architecture (x86-64, aarch64, armv7) and installs `rp` to `/usr/local/bin`.
-
-> The pre-built binaries are CLI-only (`rp run`, `rp topic`, `rp bag`, etc.). The GUI (`rp gui`) requires a desktop environment and is not included.
+Automatically detects your architecture (x86-64, aarch64) and installs `rp` to `/usr/local/bin`.
 
 ## Quick Start
 
