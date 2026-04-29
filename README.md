@@ -80,11 +80,17 @@ No Rust, no compiler, no build dependencies required — just download and run.
 # CLI only (default)
 curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/install.sh | sh
 
-# CLI + GUI
+# CLI + GUI  (x86-64 only)
 curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/install.sh | sh -s -- --gui
 ```
 
-Automatically detects your architecture (x86-64, aarch64) and installs `rp` to `/usr/local/bin`.
+Automatically detects your architecture and installs `rp` to `/usr/local/bin`.
+
+| Binary | Architecture | GUI |
+|---|---|---|
+| `rp-linux-x86_64` | x86-64 | |
+| `rp-linux-x86_64-gui` | x86-64 | ✓ |
+| `rp-linux-aarch64` | Raspberry Pi 4/5, Jetson (64-bit OS) | |
 
 ## Quick Start
 

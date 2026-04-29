@@ -22,7 +22,12 @@ case "$(uname -m)" in
 esac
 
 if [ "$GUI" = "1" ]; then
-  ARTIFACT="${BASE}-gui"
+  if [ "$(uname -m)" = "aarch64" ]; then
+    echo "GUI build is not available for aarch64. Installing CLI version."
+    ARTIFACT="$BASE"
+  else
+    ARTIFACT="${BASE}-gui"
+  fi
 else
   ARTIFACT="$BASE"
 fi
