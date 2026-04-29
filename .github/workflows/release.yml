@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     name: Build (${{ matrix.artifact }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
 
     strategy:
       fail-fast: false
@@ -19,6 +19,7 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             artifact: rp-linux-x86_64
+            runner: ubuntu-22.04
             cross_pkg: ""
             extra_pkg: ""
             multiarch: ""
@@ -27,6 +28,7 @@ jobs:
 
           - target: x86_64-unknown-linux-gnu
             artifact: rp-linux-x86_64-gui
+            runner: ubuntu-22.04
             cross_pkg: ""
             extra_pkg: libgtk-3-dev
             multiarch: ""
@@ -35,6 +37,7 @@ jobs:
 
           - target: aarch64-unknown-linux-gnu
             artifact: rp-linux-aarch64
+            runner: ubuntu-22.04
             cross_pkg: gcc-aarch64-linux-gnu
             extra_pkg: libssl-dev:arm64
             multiarch: arm64
@@ -48,16 +51,14 @@ jobs:
       - name: Add multiarch support
         if: matrix.multiarch != ''
         run: |
-          # Restrict existing sources to amd64 to avoid 404s on arm64
-          sudo sed -i '/^Types: deb/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
-          # Add arm64 packages via ports.ubuntu.com
-          sudo tee /etc/apt/sources.list.d/arm64-ports.list << 'EOF'
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-backports main restricted universe multiverse
-          EOF
           sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          sudo tee /etc/apt/sources.list.d/arm64-ports.list << 'EOF'
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse
+          EOF
 
       - name: Install system dependencies
         run: |
