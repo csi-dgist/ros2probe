@@ -67,60 +67,22 @@ ros2probe attaches an eBPF socket filter to every non-loopback network interface
 |---|---|
 | Linux 5.15+ | eBPF socket filter, AF_PACKET TPACKET_V3 |
 | ROS 2 Humble+ | Iron, Jazzy, Rolling also supported |
-| Rust ≥ 1.85 | Stable + nightly (`rust-src`) — installed via rustup |
-| `bpf-linker` | Required for the eBPF program |
-| `libssl-dev` | Always required (reqwest TLS) |
-| `libgtk-3-dev` | Full build only (rfd file dialog) · skip for minimal |
 | Python 3 + `rclpy` | Only for `rp topic echo` / `rp topic delay` |
 | Optional | Jumbo frames, DDS XML profile that avoids IP fragmentation |
 
 ---
 
-## Build & Install
+## Install
 
-ros2probe needs Rust ≥ 1.85 (edition 2024). Distro packages are usually too old — install via rustup.
-
-### 1. System dependencies
-
-Always required (TLS for reqwest)
-```sh
-sudo apt install -y pkg-config libssl-dev
-```
-
-Only for the full (GUI) build — file dialog via rfd/gtk3
-```sh
-sudo apt install -y libgtk-3-dev
-```
-
-### 2. Rust toolchain
+No Rust, no compiler, no build dependencies required — just download and run.
 
 ```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-source "$HOME/.cargo/env"
-
-rustup toolchain install nightly --component rust-src   # for eBPF
-cargo install bpf-linker                                # eBPF linker
+curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/install.sh | sh
 ```
 
-> **If you already had a distro Rust:** make sure `which cargo` points to `~/.cargo/bin/cargo`. Otherwise run `source "$HOME/.cargo/env"` or open a new shell.
+Automatically detects your architecture (x86-64, aarch64, armv7) and installs `rp` to `/usr/local/bin`.
 
-### 3. Clone
-```sh
-git clone https://github.com/csi-dgist/ros2probe.git
-cd ros2probe
-```
-
-### 4. Build & Install
-
-Full — runtime + CLI + GUI (default)
-```sh
-cargo install --path ros2probe --bins
-```
-
-Minimal — runtime + CLI only (no eframe/egui/rfd, no `rp gui`)
-```sh
-cargo install --path ros2probe --bins --no-default-features
-```
+> The pre-built binaries are CLI-only (`rp run`, `rp topic`, `rp bag`, etc.). The GUI (`rp gui`) requires a desktop environment and is not included.
 
 ## Quick Start
 

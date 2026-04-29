@@ -17,7 +17,6 @@ use crate::command::{
 use super::super::bag::util::send_request;
 
 #[derive(Debug, Args)]
-#[command(after_help = "NOTE: Internal topics (tf, rosout, parameter_events, debug topics, SHM-only) are not supported and will not produce output.")]
 pub struct TopicEchoCommand {
     /// Name of the ROS topic to observe
     pub topic_name: String,
