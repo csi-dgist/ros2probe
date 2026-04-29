@@ -92,6 +92,14 @@ Automatically detects your architecture and installs `rp` to `/usr/local/bin`.
 | `rp-linux-x86_64-gui` | x86-64 | ✓ |
 | `rp-linux-aarch64` | Raspberry Pi 4/5, Jetson (64-bit OS) | |
 
+## Uninstall
+
+```sh
+sudo rm /usr/local/bin/rp
+```
+
+---
+
 ## Quick Start
 
 **Host A**:
