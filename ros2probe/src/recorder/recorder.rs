@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     env,
+    ffi::CString,
     fs::{self, File},
     io::BufWriter,
     path::{Path, PathBuf},
@@ -8,6 +9,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use libc;
 use mcap::{
     records::{MessageHeader, Metadata},
     Compression, WriteOptions, Writer,
@@ -87,6 +89,7 @@ impl Recorder {
 
     pub fn finish(mut self) -> anyhow::Result<PathBuf> {
         self.writer.finish().context("finish MCAP writer")?;
+        restore_ownership(&self.path);
         Ok(self.path)
     }
 
@@ -332,4 +335,28 @@ fn system_time_to_nanos(timestamp: SystemTime) -> anyhow::Result<u64> {
         .duration_since(UNIX_EPOCH)
         .context("timestamp earlier than UNIX_EPOCH")?;
     u64::try_from(duration.as_nanos()).context("timestamp does not fit in u64 nanoseconds")
+}
+
+// When rp runs as sudo, recorded files are owned by root.
+// Restore ownership to the original user (SUDO_USER) so they can delete them.
+fn restore_ownership(path: &Path) {
+    let sudo_user = match env::var("SUDO_USER") {
+        Ok(u) if !u.is_empty() => u,
+        _ => return,
+    };
+    let Ok(cname) = CString::new(sudo_user) else { return };
+    unsafe {
+        let pw = libc::getpwnam(cname.as_ptr());
+        if pw.is_null() { return; }
+        let uid = (*pw).pw_uid;
+        let gid = (*pw).pw_gid;
+        if let Ok(p) = CString::new(path.as_os_str().as_encoded_bytes()) {
+            libc::chown(p.as_ptr(), uid, gid);
+        }
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            if let Ok(p) = CString::new(parent.as_os_str().as_encoded_bytes()) {
+                libc::chown(p.as_ptr(), uid, gid);
+            }
+        }
+    }
 }
