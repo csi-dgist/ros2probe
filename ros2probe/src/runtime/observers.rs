@@ -1,19 +1,31 @@
-use std::collections::{HashMap, VecDeque};
-
-use ros2probe_common::TopicGid;
-use std::sync::mpsc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::{HashMap, VecDeque},
+    fs,
+    io::{self, Write},
+    os::unix::{
+        fs::PermissionsExt,
+        net::{UnixListener, UnixStream},
+    },
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{Context, bail};
-use base64::Engine;
+use ros2probe_common::TopicGid;
 
 use crate::{
     command::protocol::{
         TopicBwStartRequest, TopicBwStartResponse, TopicBwStatusResponse, TopicBwStopResponse,
         TopicDelayStartRequest, TopicDelayStartResponse, TopicDelayStats, TopicDelayStatusResponse,
-        TopicDelayStopResponse, TopicEchoMessage, TopicEchoStartRequest, TopicEchoStartResponse,
-        TopicEchoStatusResponse, TopicEchoStopResponse,
-        TopicHzStartRequest, TopicHzStartResponse, TopicHzStatusResponse, TopicHzStopResponse,
+        TopicDelayStopResponse, TopicEchoStartRequest, TopicEchoStartResponse,
+        TopicEchoStatusResponse, TopicEchoStopResponse, TopicHzStartRequest, TopicHzStartResponse,
+        TopicHzStatusResponse, TopicHzStopResponse,
     },
     protocols::RtpsDataMessage,
     recorder::RecorderTopicMetadata,
@@ -70,9 +82,7 @@ pub(super) fn bw_start_session(
     })
 }
 
-pub(super) fn bw_build_status_response(
-    session: Option<&TopicBwSession>,
-) -> TopicBwStatusResponse {
+pub(super) fn bw_build_status_response(session: Option<&TopicBwSession>) -> TopicBwStatusResponse {
     let Some(session) = session else {
         return TopicBwStatusResponse {
             active: false,
@@ -92,12 +102,17 @@ pub(super) fn bw_build_status_response(
         active: true,
         topic_name: Some(session.topic_name.clone()),
         bytes_per_second: stats.as_ref().map(|s| s.bytes_per_second),
-        message_count: stats.as_ref().map_or(session.samples.len(), |s| s.message_count),
+        message_count: stats
+            .as_ref()
+            .map_or(session.samples.len(), |s| s.message_count),
         window_size: session.window_size,
         mean_size_bytes: stats.as_ref().map(|s| s.mean_size_bytes),
         min_size_bytes: stats.as_ref().map(|s| s.min_size_bytes),
         max_size_bytes: stats.as_ref().map(|s| s.max_size_bytes),
-        last_message_secs_ago: session.samples.back().map(|s| s.observed_at.elapsed().as_secs_f64()),
+        last_message_secs_ago: session
+            .samples
+            .back()
+            .map(|s| s.observed_at.elapsed().as_secs_f64()),
     }
 }
 
@@ -105,9 +120,15 @@ pub(super) fn bw_stop_session(
     session: &mut Option<TopicBwSession>,
 ) -> anyhow::Result<TopicBwStopResponse> {
     let Some(session) = session.take() else {
-        return Ok(TopicBwStopResponse { stopped: false, topic_name: None });
+        return Ok(TopicBwStopResponse {
+            stopped: false,
+            topic_name: None,
+        });
     };
-    Ok(TopicBwStopResponse { stopped: true, topic_name: Some(session.topic_name) })
+    Ok(TopicBwStopResponse {
+        stopped: true,
+        topic_name: Some(session.topic_name),
+    })
 }
 
 pub(super) fn bw_observe_message(
@@ -153,13 +174,25 @@ impl TopicBwSession {
         let mean_size_bytes = total_bytes as f64 / message_count as f64;
         let bytes_per_second =
             if let (Some(first), Some(last)) = (self.samples.front(), self.samples.back()) {
-                let elapsed =
-                    last.observed_at.saturating_duration_since(first.observed_at).as_secs_f64();
-                if elapsed > f64::EPSILON { total_bytes as f64 / elapsed } else { 0.0 }
+                let elapsed = last
+                    .observed_at
+                    .saturating_duration_since(first.observed_at)
+                    .as_secs_f64();
+                if elapsed > f64::EPSILON {
+                    total_bytes as f64 / elapsed
+                } else {
+                    0.0
+                }
             } else {
                 0.0
             };
-        Some(TopicBwStats { bytes_per_second, message_count, mean_size_bytes, min_size_bytes, max_size_bytes })
+        Some(TopicBwStats {
+            bytes_per_second,
+            message_count,
+            mean_size_bytes,
+            min_size_bytes,
+            max_size_bytes,
+        })
     }
 }
 
@@ -204,7 +237,9 @@ pub(super) fn hz_start_session(
         periods: VecDeque::with_capacity(request.window_size.min(1024)),
     });
 
-    Ok(TopicHzStartResponse { topic_name: request.topic_name })
+    Ok(TopicHzStartResponse {
+        topic_name: request.topic_name,
+    })
 }
 
 pub(super) fn hz_build_status_response(
@@ -240,9 +275,15 @@ pub(super) fn hz_stop_session(
     session: &mut Option<TopicHzSession>,
 ) -> anyhow::Result<TopicHzStopResponse> {
     let Some(session) = session.take() else {
-        return Ok(TopicHzStopResponse { stopped: false, topic_name: None });
+        return Ok(TopicHzStopResponse {
+            stopped: false,
+            topic_name: None,
+        });
     };
-    Ok(TopicHzStopResponse { stopped: true, topic_name: Some(session.topic_name) })
+    Ok(TopicHzStopResponse {
+        stopped: true,
+        topic_name: Some(session.topic_name),
+    })
 }
 
 pub(super) fn hz_observe_message(
@@ -282,11 +323,18 @@ impl TopicHzSession {
         let variance = self
             .periods
             .iter()
-            .map(|p| { let d = p - mean_period; d * d })
+            .map(|p| {
+                let d = p - mean_period;
+                d * d
+            })
             .sum::<f64>()
             / window as f64;
         let min_period_seconds = self.periods.iter().copied().fold(f64::INFINITY, f64::min);
-        let max_period_seconds = self.periods.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let max_period_seconds = self
+            .periods
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
         Some(TopicHzStats {
             average_rate_hz: window as f64 / sum,
             min_period_seconds,
@@ -299,13 +347,16 @@ impl TopicHzSession {
 
 // ── topic echo ────────────────────────────────────────────────────────────────
 
-const MAX_ECHO_PENDING: usize = 32;
+const ECHO_FRAME_MAGIC: &[u8; 4] = b"RPE1";
+const ECHO_FRAME_VERSION: u8 = 1;
 
 pub(super) struct TopicEchoSession {
     topic_name: String,
-    pending_messages: VecDeque<TopicEchoMessage>,
-    waiting_reply: Option<mpsc::Sender<RuntimeReply>>,
     writer_seq_nums: HashMap<TopicGid, i64>,
+    stream_path: PathBuf,
+    connected_streams: Arc<Mutex<Vec<UnixStream>>>,
+    accept_stop: Arc<AtomicBool>,
+    accept_thread: Option<thread::JoinHandle<()>>,
 }
 
 pub(super) fn echo_start_session(
@@ -321,23 +372,41 @@ pub(super) fn echo_start_session(
             request.topic_name
         );
     }
+    let stream_path = echo_stream_path();
+    let connected_streams = Arc::new(Mutex::new(Vec::new()));
+    let (accept_stop, accept_thread) =
+        spawn_echo_stream_acceptor(stream_path.clone(), Arc::clone(&connected_streams))
+            .context("start topic echo binary stream")?;
+    let response = TopicEchoStartResponse {
+        topic_name: request.topic_name.clone(),
+        stream_path: Some(stream_path.to_string_lossy().into_owned()),
+    };
     *session = Some(TopicEchoSession {
         topic_name: request.topic_name.clone(),
-        pending_messages: VecDeque::with_capacity(MAX_ECHO_PENDING),
-        waiting_reply: None,
         writer_seq_nums: HashMap::new(),
+        stream_path,
+        connected_streams,
+        accept_stop,
+        accept_thread: Some(accept_thread),
     });
-    Ok(TopicEchoStartResponse { topic_name: request.topic_name })
+    Ok(response)
 }
 
 pub(super) fn echo_build_status_response(
     session: Option<&mut TopicEchoSession>,
 ) -> TopicEchoStatusResponse {
     let Some(session) = session else {
-        return TopicEchoStatusResponse { active: false, topic_name: None, messages: Vec::new() };
+        return TopicEchoStatusResponse {
+            active: false,
+            topic_name: None,
+            messages: Vec::new(),
+        };
     };
-    let messages = session.pending_messages.drain(..).collect::<Vec<_>>();
-    TopicEchoStatusResponse { active: true, topic_name: Some(session.topic_name.clone()), messages }
+    TopicEchoStatusResponse {
+        active: true,
+        topic_name: Some(session.topic_name.clone()),
+        messages: Vec::new(),
+    }
 }
 
 pub(super) fn echo_reply_or_defer_status(
@@ -353,34 +422,26 @@ pub(super) fn echo_reply_or_defer_status(
         return;
     };
 
-    if !session.pending_messages.is_empty() {
-        let _ = reply.send(RuntimeReply::TopicEchoStatus(echo_build_status_response(Some(session))));
-        return;
-    }
-
-    if let Some(previous_reply) = session.waiting_reply.replace(reply) {
-        let _ = previous_reply.send(RuntimeReply::TopicEchoStatus(TopicEchoStatusResponse {
-            active: true,
-            topic_name: Some(session.topic_name.clone()),
-            messages: Vec::new(),
-        }));
-    }
+    let _ = reply.send(RuntimeReply::TopicEchoStatus(echo_build_status_response(
+        Some(session),
+    )));
 }
 
 pub(super) fn echo_stop_session(
     session: &mut Option<TopicEchoSession>,
 ) -> anyhow::Result<TopicEchoStopResponse> {
-    let Some(session) = session.take() else {
-        return Ok(TopicEchoStopResponse { stopped: false, topic_name: None });
-    };
-    if let Some(reply) = session.waiting_reply {
-        let _ = reply.send(RuntimeReply::TopicEchoStatus(TopicEchoStatusResponse {
-            active: false,
+    let Some(mut session) = session.take() else {
+        return Ok(TopicEchoStopResponse {
+            stopped: false,
             topic_name: None,
-            messages: Vec::new(),
-        }));
-    }
-    Ok(TopicEchoStopResponse { stopped: true, topic_name: Some(session.topic_name) })
+        });
+    };
+    let topic_name = session.topic_name.clone();
+    session.shutdown_stream();
+    Ok(TopicEchoStopResponse {
+        stopped: true,
+        topic_name: Some(topic_name),
+    })
 }
 
 pub(super) fn echo_observe_message(
@@ -400,17 +461,7 @@ pub(super) fn echo_observe_message(
     };
     session.writer_seq_nums.insert(message.writer_gid, seq);
 
-    if session.pending_messages.len() == MAX_ECHO_PENDING {
-        session.pending_messages.pop_front();
-    }
-    session.pending_messages.push_back(TopicEchoMessage {
-        type_name: metadata.type_name.clone(),
-        payload_base64: base64::engine::general_purpose::STANDARD.encode(&message.payload),
-        lost_before,
-    });
-    if let Some(reply) = session.waiting_reply.take() {
-        let _ = reply.send(RuntimeReply::TopicEchoStatus(echo_build_status_response(Some(session))));
-    }
+    session.write_message_frames(metadata.type_name.as_deref(), lost_before, &message.payload);
 }
 
 fn rtps_seq_num(bytes: &[u8; 8]) -> i64 {
@@ -424,6 +475,94 @@ impl TopicEchoSession {
     pub(super) fn topic_name(&self) -> &str {
         &self.topic_name
     }
+
+    fn write_message_frames(
+        &mut self,
+        type_name: Option<&str>,
+        lost_before: usize,
+        payload: &[u8],
+    ) {
+        self.connected_streams
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .retain_mut(|stream| write_echo_frame(stream, type_name, lost_before, payload).is_ok());
+    }
+
+    fn shutdown_stream(&mut self) {
+        self.accept_stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.accept_thread.take() {
+            let _ = handle.join();
+        }
+        let _ = fs::remove_file(&self.stream_path);
+    }
+}
+
+impl Drop for TopicEchoSession {
+    fn drop(&mut self) {
+        self.shutdown_stream();
+    }
+}
+
+fn echo_stream_path() -> PathBuf {
+    PathBuf::from(format!("/tmp/ros2probe.echo.{}.sock", std::process::id()))
+}
+
+fn spawn_echo_stream_acceptor(
+    stream_path: PathBuf,
+    connected_streams: Arc<Mutex<Vec<UnixStream>>>,
+) -> io::Result<(Arc<AtomicBool>, thread::JoinHandle<()>)> {
+    if let Err(err) = fs::remove_file(&stream_path) {
+        if err.kind() != io::ErrorKind::NotFound {
+            return Err(err);
+        }
+    }
+    let listener = UnixListener::bind(&stream_path)?;
+    fs::set_permissions(&stream_path, fs::Permissions::from_mode(0o666))?;
+    listener.set_nonblocking(true)?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let handle = thread::spawn(move || {
+        while !thread_stop.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok((stream, _addr)) => {
+                    let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
+                    connected_streams
+                        .lock()
+                        .unwrap_or_else(|err| err.into_inner())
+                        .push(stream);
+                }
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    Ok((stop, handle))
+}
+
+fn write_echo_frame(
+    stream: &mut UnixStream,
+    type_name: Option<&str>,
+    lost_before: usize,
+    payload: &[u8],
+) -> io::Result<()> {
+    let type_name = type_name.unwrap_or("").as_bytes();
+    let type_len = u16::try_from(type_name.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "echo type name too long"))?;
+    let lost_before = u64::try_from(lost_before)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "lost count too large"))?;
+    let payload_len = u32::try_from(payload.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "echo payload too large"))?;
+
+    stream.write_all(ECHO_FRAME_MAGIC)?;
+    stream.write_all(&[ECHO_FRAME_VERSION])?;
+    stream.write_all(&type_len.to_le_bytes())?;
+    stream.write_all(&lost_before.to_le_bytes())?;
+    stream.write_all(&payload_len.to_le_bytes())?;
+    stream.write_all(type_name)?;
+    stream.write_all(payload)?;
+    stream.flush()
 }
 
 // ── topic delay ───────────────────────────────────────────────────────────────
@@ -432,6 +571,7 @@ pub(super) struct TopicDelaySession {
     topic_name: String,
     delays: VecDeque<f64>,
     window_size: usize,
+    missing_header: bool,
 }
 
 pub(super) fn delay_start_session(
@@ -454,8 +594,11 @@ pub(super) fn delay_start_session(
         topic_name: request.topic_name.clone(),
         delays: VecDeque::with_capacity(request.window_size.min(1024)),
         window_size: request.window_size,
+        missing_header: false,
     });
-    Ok(TopicDelayStartResponse { topic_name: request.topic_name })
+    Ok(TopicDelayStartResponse {
+        topic_name: request.topic_name,
+    })
 }
 
 pub(super) fn delay_build_status_response(
@@ -466,6 +609,7 @@ pub(super) fn delay_build_status_response(
             active: false,
             topic_name: None,
             stats: None,
+            missing_header: false,
             messages: Vec::new(),
         };
     };
@@ -474,6 +618,7 @@ pub(super) fn delay_build_status_response(
         active: true,
         topic_name: Some(session.topic_name.clone()),
         stats,
+        missing_header: session.missing_header,
         messages: Vec::new(),
     }
 }
@@ -482,9 +627,15 @@ pub(super) fn delay_stop_session(
     session: &mut Option<TopicDelaySession>,
 ) -> anyhow::Result<TopicDelayStopResponse> {
     let Some(session) = session.take() else {
-        return Ok(TopicDelayStopResponse { stopped: false, topic_name: None });
+        return Ok(TopicDelayStopResponse {
+            stopped: false,
+            topic_name: None,
+        });
     };
-    Ok(TopicDelayStopResponse { stopped: true, topic_name: Some(session.topic_name) })
+    Ok(TopicDelayStopResponse {
+        stopped: true,
+        topic_name: Some(session.topic_name),
+    })
 }
 
 pub(super) fn delay_observe_message(
@@ -500,19 +651,20 @@ pub(super) fn delay_observe_message(
         return;
     };
 
-    if let Some(stamp_nanos) = parse_cdr_stamp_nanos(&message.payload) {
-        let delay_ms = if received_at_nanos >= stamp_nanos {
-            (received_at_nanos - stamp_nanos) as f64 / 1_000_000.0
-        } else {
-            // stamp slightly in the future (clock jitter) — treat as near-zero delay
-            (stamp_nanos - received_at_nanos) as f64 / 1_000_000.0
-        };
-        if delay_ms < 60_000.0 {
-            session.delays.push_back(delay_ms);
-            while session.delays.len() > session.window_size {
-                session.delays.pop_front();
-            }
-        }
+    let Some(stamp_nanos) = parse_cdr_stamp_nanos(&message.payload) else {
+        session.missing_header = true;
+        return;
+    };
+
+    let delay_ms = if received_at_nanos >= stamp_nanos {
+        (received_at_nanos - stamp_nanos) as f64 / 1_000_000.0
+    } else {
+        // stamp slightly in the future (clock jitter) — report its magnitude.
+        (stamp_nanos - received_at_nanos) as f64 / 1_000_000.0
+    };
+    session.delays.push_back(delay_ms);
+    while session.delays.len() > session.window_size {
+        session.delays.pop_front();
     }
 }
 
@@ -546,12 +698,19 @@ fn delay_stats_from_samples(delays: &VecDeque<f64>) -> Option<TopicDelayStats> {
         / window as f64;
     let min = delays.iter().copied().fold(f64::INFINITY, f64::min);
     let max = delays.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    Some(TopicDelayStats { avg_ms: mean, min_ms: min, max_ms: max, std_dev_ms: variance.sqrt(), window })
+    Some(TopicDelayStats {
+        avg_ms: mean,
+        min_ms: min,
+        max_ms: max,
+        std_dev_ms: variance.sqrt(),
+        window,
+    })
 }
 
 fn system_time_to_nanos(timestamp: SystemTime) -> anyhow::Result<u64> {
-    let duration =
-        timestamp.duration_since(UNIX_EPOCH).context("timestamp earlier than UNIX_EPOCH")?;
+    let duration = timestamp
+        .duration_since(UNIX_EPOCH)
+        .context("timestamp earlier than UNIX_EPOCH")?;
     u64::try_from(duration.as_nanos()).context("timestamp does not fit in u64 nanoseconds")
 }
 
@@ -563,8 +722,8 @@ fn parse_cdr_stamp_nanos(payload: &[u8]) -> Option<u64> {
     }
     let enc = u16::from_be_bytes([payload[0], payload[1]]);
     let (little_endian, sec_offset) = match enc {
-        0x0001 => (true, 4usize),   // CDR_LE with encapsulation header
-        0x0000 => (false, 4usize),  // CDR_BE with encapsulation header
+        0x0001 => (true, 4usize),  // CDR_LE with encapsulation header
+        0x0000 => (false, 4usize), // CDR_BE with encapsulation header
         _ => {
             // Encapsulation header absent or unknown — try assuming LE at offset 0
             (true, 0usize)
