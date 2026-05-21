@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use anyhow::{Context, bail};
@@ -13,6 +12,8 @@ use crate::command::protocol::{
 };
 
 use super::super::bag::util::send_request;
+
+const DELAY_HELPER_SOURCE: &str = include_str!("delay_helper.py");
 
 #[derive(Debug, Args)]
 pub struct TopicDelayCommand {
@@ -130,14 +131,6 @@ fn resolve_message_type(topic_name: &str) -> anyhow::Result<String> {
     }
 }
 
-fn helper_script_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("cli")
-        .join("topic")
-        .join("delay_helper.py")
-}
-
 struct PythonDelayExtractor {
     _child: Child,
     stdin: ChildStdin,
@@ -147,7 +140,9 @@ struct PythonDelayExtractor {
 impl PythonDelayExtractor {
     fn spawn() -> anyhow::Result<Self> {
         let mut child = Command::new("python3")
-            .arg(helper_script_path())
+            .arg("-u")
+            .arg("-c")
+            .arg(DELAY_HELPER_SOURCE)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())

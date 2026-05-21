@@ -1,5 +1,4 @@
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use anyhow::{Context, bail};
@@ -15,6 +14,8 @@ use crate::command::{
 };
 
 use super::super::bag::util::send_request;
+
+const ECHO_HELPER_SOURCE: &str = include_str!("echo_helper.py");
 
 #[derive(Debug, Args)]
 pub struct TopicEchoCommand {
@@ -202,14 +203,6 @@ fn resolve_message_type(
     }
 }
 
-fn helper_script_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("cli")
-        .join("topic")
-        .join("echo_helper.py")
-}
-
 fn hex_bytes(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -235,7 +228,9 @@ impl PythonEchoDecoder {
         csv: bool,
     ) -> anyhow::Result<Self> {
         let mut child = Command::new("python3")
-            .arg(helper_script_path())
+            .arg("-u")
+            .arg("-c")
+            .arg(ECHO_HELPER_SOURCE)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
