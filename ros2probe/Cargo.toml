@@ -1,6 +1,6 @@
 [package]
 name = "ros2probe"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 default-run = "rp"
 
@@ -64,4 +64,3 @@ ros2probe-ebpf = { path = "../ebpf" }
 [[bin]]
 name = "rp"
 path = "src/bin/rp.rs"
-
