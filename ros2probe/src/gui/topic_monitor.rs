@@ -10,20 +10,21 @@ use std::{
 use eframe::egui;
 use serde::{Deserialize, Serialize};
 
+use super::{
+    dashboard::{GraphSnapshot, fetch_graph_snapshot},
+    ros_graph::{
+        GraphFilter, LayoutWorker, LayoutedGraph, apply_filter, is_recordable_topic,
+        render_graph_filter_bar, render_ros_graph_selectable,
+    },
+};
 use crate::{
     client::send_request,
     command::protocol::{
         CommandRequest, CommandResponse, TopicBwStartRequest, TopicBwStopRequest,
         TopicDelayStartRequest, TopicDelayStopRequest, TopicDetails, TopicEchoStartRequest,
-        TopicEchoStatusRequest, TopicEchoStopRequest, TopicHzBwStatusRequest, TopicHzStartRequest,
-        TopicHzStopRequest, TopicInfoRequest, TopicListRequest,
+        TopicEchoStopRequest, TopicHzBwStatusRequest, TopicHzStartRequest, TopicHzStopRequest,
+        TopicInfoRequest, TopicListRequest,
     },
-};
-
-use super::dashboard::{fetch_graph_snapshot, GraphSnapshot};
-use super::ros_graph::{
-    apply_filter, is_recordable_topic, render_graph_filter_bar,
-    render_ros_graph_selectable, GraphFilter, LayoutWorker, LayoutedGraph,
 };
 
 const PAGE_BG: egui::Color32 = egui::Color32::from_rgb(230, 232, 236);
@@ -226,13 +227,25 @@ impl TopicMonitorPage {
                         });
                     }
                     let min_time = snapshot.time_secs - HISTORY_RETENTION_SECS;
-                    while state.hz_history.front().is_some_and(|s| s.time_secs < min_time) {
+                    while state
+                        .hz_history
+                        .front()
+                        .is_some_and(|s| s.time_secs < min_time)
+                    {
                         state.hz_history.pop_front();
                     }
-                    while state.bw_history.front().is_some_and(|s| s.time_secs < min_time) {
+                    while state
+                        .bw_history
+                        .front()
+                        .is_some_and(|s| s.time_secs < min_time)
+                    {
                         state.bw_history.pop_front();
                     }
-                    while state.delay_history.front().is_some_and(|s| s.time_secs < min_time) {
+                    while state
+                        .delay_history
+                        .front()
+                        .is_some_and(|s| s.time_secs < min_time)
+                    {
                         state.delay_history.pop_front();
                     }
                     self.error = None;
@@ -297,7 +310,9 @@ impl TopicMonitorPage {
                         );
                         if self.window_size != prev_window {
                             if self.selected_topic.is_some() {
-                                let _ = self.cmd_tx.send(MonitorCommand::SetWindowSize(self.window_size));
+                                let _ = self
+                                    .cmd_tx
+                                    .send(MonitorCommand::SetWindowSize(self.window_size));
                             }
                         }
                     });
@@ -329,8 +344,7 @@ impl TopicMonitorPage {
 
                 if self.topics.is_empty() {
                     ui.label(
-                        egui::RichText::new("No topics found")
-                            .color(egui::Color32::from_gray(140)),
+                        egui::RichText::new("No topics found").color(egui::Color32::from_gray(140)),
                     );
                     return;
                 }
@@ -367,8 +381,9 @@ impl TopicMonitorPage {
                             egui::Color32::TRANSPARENT
                         })
                         .stroke(egui::Stroke::NONE);
-                    let response =
-                        ui.add_sized([ui.available_width(), 26.0], btn).on_hover_text(topic);
+                    let response = ui
+                        .add_sized([ui.available_width(), 26.0], btn)
+                        .on_hover_text(topic);
                     if response.clicked() {
                         if selected {
                             let _ = cmd_tx.send(MonitorCommand::Deselect);
@@ -410,12 +425,10 @@ impl TopicMonitorPage {
 
                     if !internal.is_empty() {
                         ui.add_space(4.0);
-                        let header = egui::RichText::new(format!(
-                            "Internal Topics ({})",
-                            internal.len()
-                        ))
-                        .size(11.0)
-                        .color(egui::Color32::from_gray(120));
+                        let header =
+                            egui::RichText::new(format!("Internal Topics ({})", internal.len()))
+                                .size(11.0)
+                                .color(egui::Color32::from_gray(120));
                         egui::CollapsingHeader::new(header)
                             .id_salt("internal_topics_monitor")
                             .default_open(false)
@@ -464,12 +477,9 @@ impl TopicMonitorPage {
                         self.graph = filtered;
                     }
                     // Show ROS graph; click on a topic node selects it
-                    if let Some(clicked) = render_ros_graph_selectable(
-                        ui,
-                        self.layout.as_ref(),
-                        &self.graph,
-                        None,
-                    ) {
+                    if let Some(clicked) =
+                        render_ros_graph_selectable(ui, self.layout.as_ref(), &self.graph, None)
+                    {
                         if self.topics.contains(&clicked) {
                             let _ = self.cmd_tx.send(MonitorCommand::SelectTopic {
                                 topic: clicked.clone(),
@@ -545,9 +555,11 @@ impl TopicMonitorPage {
         monitor_frame(ui, "Bandwidth", &bw_label, BW_COLOR, |ui| {
             if let Some(stats) = &self.state.bw_stats {
                 ui.horizontal(|ui| {
-                    if let (Some(mean), Some(min), Some(max)) =
-                        (stats.mean_size_bytes, stats.min_size_bytes, stats.max_size_bytes)
-                    {
+                    if let (Some(mean), Some(min), Some(max)) = (
+                        stats.mean_size_bytes,
+                        stats.min_size_bytes,
+                        stats.max_size_bytes,
+                    ) {
                         stat_chip(ui, "mean", &format_bytes(mean as f32));
                         ui.add_space(8.0);
                         stat_chip(ui, "min", &format_bytes(min as f32));
@@ -567,7 +579,10 @@ impl TopicMonitorPage {
             let (y_max, unit, scale) = bw_axis_unit(y_max_mib);
             let scaled: Vec<TimedSample> = bw_history
                 .iter()
-                .map(|s| TimedSample { time_secs: s.time_secs, value: s.value * scale })
+                .map(|s| TimedSample {
+                    time_secs: s.time_secs,
+                    value: s.value * scale,
+                })
                 .collect();
 
             draw_time_series(ui, now_secs, &scaled, y_max, unit, BW_COLOR);
@@ -609,7 +624,10 @@ impl TopicMonitorPage {
     fn render_topic_info_section(&self, ui: &mut egui::Ui) {
         egui::Frame::group(ui.style())
             .fill(egui::Color32::from_rgb(252, 253, 255))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 217, 226)))
+            .stroke(egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgb(210, 217, 226),
+            ))
             .corner_radius(egui::CornerRadius::same(8))
             .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
@@ -674,7 +692,9 @@ impl TopicMonitorPage {
                         ui.add_space(4.0);
                         if info.publishers.is_empty() {
                             ui.label(
-                                egui::RichText::new("none").small().color(egui::Color32::from_gray(150)),
+                                egui::RichText::new("none")
+                                    .small()
+                                    .color(egui::Color32::from_gray(150)),
                             );
                         } else {
                             for ep in &info.publishers {
@@ -697,7 +717,9 @@ impl TopicMonitorPage {
                         ui.add_space(4.0);
                         if info.subscriptions.is_empty() {
                             ui.label(
-                                egui::RichText::new("none").small().color(egui::Color32::from_gray(150)),
+                                egui::RichText::new("none")
+                                    .small()
+                                    .color(egui::Color32::from_gray(150)),
                             );
                         } else {
                             for ep in &info.subscriptions {
@@ -712,7 +734,10 @@ impl TopicMonitorPage {
     fn render_echo_section(&mut self, ui: &mut egui::Ui) {
         egui::Frame::group(ui.style())
             .fill(egui::Color32::from_rgb(252, 253, 255))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 217, 226)))
+            .stroke(egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgb(210, 217, 226),
+            ))
             .corner_radius(egui::CornerRadius::same(8))
             .inner_margin(egui::Margin::same(12))
             .show(ui, |ui| {
@@ -725,7 +750,9 @@ impl TopicMonitorPage {
                             ("Enable", egui::Color32::from_rgb(56, 110, 200))
                         };
                         let btn = egui::Button::new(
-                            egui::RichText::new(btn_text).color(egui::Color32::WHITE).size(13.0),
+                            egui::RichText::new(btn_text)
+                                .color(egui::Color32::WHITE)
+                                .size(13.0),
                         )
                         .fill(btn_fill)
                         .corner_radius(egui::CornerRadius::same(4));
@@ -803,14 +830,13 @@ struct EchoDecoder {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum HelperRequest {
     Init {
+        stream_path: String,
+        default_type: String,
         field: Option<String>,
         truncate_length: usize,
         no_arr: bool,
         no_str: bool,
-    },
-    Decode {
-        type_name: String,
-        payload_base64: String,
+        csv: bool,
     },
 }
 
@@ -824,7 +850,7 @@ enum HelperResponse {
 const ECHO_HELPER_SOURCE: &str = include_str!("../cli/topic/echo_helper.py");
 
 impl EchoDecoder {
-    fn spawn() -> anyhow::Result<Self> {
+    fn spawn(stream_path: String) -> anyhow::Result<Self> {
         use anyhow::Context;
         let mut child = Command::new("python3")
             .arg("-u")
@@ -837,12 +863,19 @@ impl EchoDecoder {
             .context("spawn echo helper")?;
         let stdin = child.stdin.take().context("take echo helper stdin")?;
         let stdout = child.stdout.take().context("take echo helper stdout")?;
-        let mut dec = Self { _child: child, stdin, stdout: BufReader::new(stdout) };
+        let mut dec = Self {
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout),
+        };
         dec.send_req(&HelperRequest::Init {
+            stream_path,
+            default_type: String::new(),
             field: None,
             truncate_length: 128,
             no_arr: false,
             no_str: false,
+            csv: false,
         })?;
         match dec.recv_resp()? {
             HelperResponse::Ok { .. } => Ok(dec),
@@ -850,28 +883,21 @@ impl EchoDecoder {
         }
     }
 
-    fn decode(&mut self, type_name: &str, payload_base64: &str) -> anyhow::Result<String> {
-        self.send_req(&HelperRequest::Decode {
-            type_name: type_name.to_string(),
-            payload_base64: payload_base64.to_string(),
-        })?;
-        match self.recv_resp()? {
-            HelperResponse::Ok { rendered } => Ok(rendered),
-            HelperResponse::Err { error } => anyhow::bail!(error),
-        }
-    }
-
     fn send_req(&mut self, req: &HelperRequest) -> anyhow::Result<()> {
         use anyhow::Context;
         serde_json::to_writer(&mut self.stdin, req).context("serialize echo helper request")?;
-        self.stdin.write_all(b"\n").context("write echo helper newline")?;
+        self.stdin
+            .write_all(b"\n")
+            .context("write echo helper newline")?;
         self.stdin.flush().context("flush echo helper stdin")
     }
 
     fn recv_resp(&mut self) -> anyhow::Result<HelperResponse> {
         use anyhow::Context;
         let mut line = String::new();
-        self.stdout.read_line(&mut line).context("read echo helper response")?;
+        self.stdout
+            .read_line(&mut line)
+            .context("read echo helper response")?;
         if line.trim().is_empty() {
             anyhow::bail!("echo helper exited unexpectedly");
         }
@@ -889,15 +915,15 @@ fn start_echo_worker(
     topic: String,
     event_tx: mpsc::Sender<MonitorEvent>,
 ) -> Option<EchoWorkerHandle> {
-    match send_request(CommandRequest::TopicEchoStart(TopicEchoStartRequest {
+    let stream_path = match send_request(CommandRequest::TopicEchoStart(TopicEchoStartRequest {
         topic_name: topic,
     })) {
-        Ok(CommandResponse::TopicEchoStart(_)) => {}
+        Ok(CommandResponse::TopicEchoStart(response)) => response.stream_path?,
         _ => return None,
-    }
+    };
 
     let handle = thread::spawn(move || {
-        let mut decoder = match EchoDecoder::spawn() {
+        let mut decoder = match EchoDecoder::spawn(stream_path) {
             Ok(d) => d,
             Err(e) => {
                 let _ = event_tx.send(MonitorEvent::Error(format!("Echo decoder: {e}")));
@@ -906,24 +932,18 @@ fn start_echo_worker(
         };
 
         loop {
-            match send_request(CommandRequest::TopicEchoStatus(TopicEchoStatusRequest)) {
-                Ok(CommandResponse::TopicEchoStatus(resp)) => {
-                    if !resp.active {
+            match decoder.recv_resp() {
+                Ok(HelperResponse::Ok { rendered, .. }) => {
+                    if event_tx
+                        .send(MonitorEvent::EchoMessages(vec![rendered]))
+                        .is_err()
+                    {
                         break;
                     }
-                    let decoded: Vec<String> = resp
-                        .messages
-                        .iter()
-                        .filter_map(|msg| {
-                            let type_name = msg.type_name.as_deref()?;
-                            decoder.decode(type_name, &msg.payload_base64).ok()
-                        })
-                        .collect();
-                    if !decoded.is_empty() {
-                        if event_tx.send(MonitorEvent::EchoMessages(decoded)).is_err() {
-                            break;
-                        }
-                    }
+                }
+                Ok(HelperResponse::Err { error }) => {
+                    let _ = event_tx.send(MonitorEvent::Error(format!("Echo decoder: {error}")));
+                    break;
                 }
                 _ => break,
             }
@@ -1031,8 +1051,16 @@ fn monitor_worker(
                 .and_then(|s| s.last_message_secs_ago)
                 .map_or(false, |secs| secs <= 2.0);
 
-            let hz = if fresh { hz_status.and_then(|s| s.average_rate_hz) } else { None };
-            let bw = if fresh { bw_status.and_then(|s| s.bytes_per_second) } else { None };
+            let hz = if fresh {
+                hz_status.and_then(|s| s.average_rate_hz)
+            } else {
+                None
+            };
+            let bw = if fresh {
+                bw_status.and_then(|s| s.bytes_per_second)
+            } else {
+                None
+            };
 
             let hz_stats = if fresh {
                 hz_status.and_then(|s| {
@@ -1057,18 +1085,22 @@ fn monitor_worker(
                 None
             };
             let delay_avg = if fresh {
-                hzbw.as_ref().and_then(|s| s.delay.as_ref()).map(|d| d.avg_ms)
+                hzbw.as_ref()
+                    .and_then(|s| s.delay.as_ref())
+                    .map(|d| d.avg_ms)
             } else {
                 None
             };
             let delay_stats = if fresh {
-                hzbw.as_ref().and_then(|s| s.delay.as_ref()).map(|d| DelayStats {
-                    avg_ms: d.avg_ms,
-                    min_ms: d.min_ms,
-                    max_ms: d.max_ms,
-                    std_dev_ms: d.std_dev_ms,
-                    window: d.window,
-                })
+                hzbw.as_ref()
+                    .and_then(|s| s.delay.as_ref())
+                    .map(|d| DelayStats {
+                        avg_ms: d.avg_ms,
+                        min_ms: d.min_ms,
+                        max_ms: d.max_ms,
+                        std_dev_ms: d.std_dev_ms,
+                        window: d.window,
+                    })
             } else {
                 None
             };
@@ -1206,7 +1238,10 @@ fn monitor_frame(
 ) {
     egui::Frame::group(ui.style())
         .fill(egui::Color32::from_rgb(252, 253, 255))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 217, 226)))
+        .stroke(egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgb(210, 217, 226),
+        ))
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
@@ -1214,7 +1249,10 @@ fn monitor_frame(
                 ui.label(egui::RichText::new(title).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
-                        egui::RichText::new(current_value).color(color).strong().size(16.0),
+                        egui::RichText::new(current_value)
+                            .color(color)
+                            .strong()
+                            .size(16.0),
                     );
                 });
             });
@@ -1226,7 +1264,10 @@ fn monitor_frame(
 fn stat_chip(ui: &mut egui::Ui, label: &str, value: &str) {
     egui::Frame::new()
         .fill(egui::Color32::from_rgb(240, 244, 250))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 217, 226)))
+        .stroke(egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgb(210, 217, 226),
+        ))
         .corner_radius(egui::CornerRadius::same(4))
         .inner_margin(egui::Margin::symmetric(6, 3))
         .show(ui, |ui| {
@@ -1353,7 +1394,11 @@ fn build_series_points(
 
     let age_to_x = |raw_age: f32| gr.right() - gr.width() * (raw_age / window);
     let val_to_y = |v: f32| {
-        let norm = if y_max > 0.0 { v.clamp(0.0, y_max) / y_max } else { 0.0 };
+        let norm = if y_max > 0.0 {
+            v.clamp(0.0, y_max) / y_max
+        } else {
+            0.0
+        };
         gr.bottom() - gr.height() * norm
     };
 
@@ -1386,7 +1431,10 @@ fn build_series_points(
 fn graph_inner_rect(rect: egui::Rect) -> egui::Rect {
     egui::Rect::from_min_max(
         egui::pos2(rect.left() + LEFT_PADDING, rect.top() + TOP_PADDING),
-        egui::pos2(rect.right() - RIGHT_AXIS_WIDTH, rect.bottom() - BOTTOM_PADDING),
+        egui::pos2(
+            rect.right() - RIGHT_AXIS_WIDTH,
+            rect.bottom() - BOTTOM_PADDING,
+        ),
     )
 }
 
@@ -1429,8 +1477,11 @@ fn format_bw(bytes_per_sec: f32) -> String {
 fn endpoint_node_label(ep: &crate::command::protocol::TopicEndpointInfo) -> String {
     match (ep.node_namespace.as_deref(), ep.node_name.as_deref()) {
         (Some(ns), Some(name)) => {
-            if ns.is_empty() || ns == "/" { format!("/{name}") }
-            else { format!("{}/{name}", ns.trim_end_matches('/')) }
+            if ns.is_empty() || ns == "/" {
+                format!("/{name}")
+            } else {
+                format!("{}/{name}", ns.trim_end_matches('/'))
+            }
         }
         (None, Some(name)) => format!("/{name}"),
         _ => ep.gid.clone(),
@@ -1440,7 +1491,10 @@ fn endpoint_node_label(ep: &crate::command::protocol::TopicEndpointInfo) -> Stri
 fn render_endpoint_verbose(ui: &mut egui::Ui, ep: &crate::command::protocol::TopicEndpointInfo) {
     egui::Frame::new()
         .fill(egui::Color32::from_rgb(244, 246, 250))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(218, 224, 232)))
+        .stroke(egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgb(218, 224, 232),
+        ))
         .corner_radius(egui::CornerRadius::same(5))
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
@@ -1471,8 +1525,9 @@ fn render_endpoint_verbose(ui: &mut egui::Ui, ep: &crate::command::protocol::Top
 
                     if let Some(v) = &ep.durability {
                         let color = match v.as_str() {
-                            "TRANSIENT_LOCAL" | "TRANSIENT" | "PERSISTENT" =>
-                                egui::Color32::from_rgb(20, 120, 50),
+                            "TRANSIENT_LOCAL" | "TRANSIENT" | "PERSISTENT" => {
+                                egui::Color32::from_rgb(20, 120, 50)
+                            }
                             "VOLATILE" => egui::Color32::from_gray(100),
                             _ => label_color,
                         };
@@ -1502,9 +1557,17 @@ fn render_endpoint_verbose(ui: &mut egui::Ui, ep: &crate::command::protocol::Top
         });
 }
 
-fn qos_row(ui: &mut egui::Ui, label: &str, value: &str, value_color: egui::Color32, monospace: bool) {
+fn qos_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &str,
+    value_color: egui::Color32,
+    monospace: bool,
+) {
     ui.label(
-        egui::RichText::new(label).size(11.0).color(egui::Color32::from_gray(115)),
+        egui::RichText::new(label)
+            .size(11.0)
+            .color(egui::Color32::from_gray(115)),
     );
     let text = egui::RichText::new(value).size(11.0).color(value_color);
     let text = if monospace { text.monospace() } else { text };

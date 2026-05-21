@@ -1,12 +1,11 @@
 use anyhow::{Context, bail};
 use clap::Args;
 
+use super::super::bag::util::send_request;
 use crate::command::protocol::{
     CommandRequest, CommandResponse, TopicDelayStartRequest, TopicDelayStatusRequest,
     TopicDelayStopRequest,
 };
-
-use super::super::bag::util::send_request;
 
 #[derive(Debug, Args)]
 pub struct TopicDelayCommand {
@@ -64,6 +63,10 @@ fn wait_for_stats() -> anyhow::Result<()> {
                             if !response.active {
                                 return Ok(());
                             }
+                            if response.missing_header {
+                                println!("msg does not have header");
+                                return Ok(());
+                            }
                             if let Some(stats) = response.stats {
                                 print_stats(
                                     stats.avg_ms / 1_000.0,
@@ -93,9 +96,6 @@ fn print_stats(
     println!("average delay: {:.3}", average_seconds);
     println!(
         "\tmin: {:.3}s max: {:.3}s std dev: {:.5}s window: {}",
-        min_seconds,
-        max_seconds,
-        std_dev_seconds,
-        window,
+        min_seconds, max_seconds, std_dev_seconds, window,
     );
 }

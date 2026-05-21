@@ -316,6 +316,8 @@ pub struct TopicDelayStatusResponse {
     #[serde(default)]
     pub stats: Option<TopicDelayStats>,
     #[serde(default)]
+    pub missing_header: bool,
+    #[serde(default)]
     pub messages: Vec<TopicDelayMessage>,
 }
 
@@ -335,6 +337,8 @@ pub struct TopicDelayMessage {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TopicEchoStartResponse {
     pub topic_name: String,
+    #[serde(default)]
+    pub stream_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
