@@ -1,7 +1,6 @@
 use std::{
     collections::VecDeque,
     io::{BufRead, BufReader, Write as IoWrite},
-    path::PathBuf,
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     sync::mpsc,
     thread,
@@ -822,19 +821,15 @@ enum HelperResponse {
     Err { error: String },
 }
 
-fn echo_helper_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("src")
-        .join("cli")
-        .join("topic")
-        .join("echo_helper.py")
-}
+const ECHO_HELPER_SOURCE: &str = include_str!("../cli/topic/echo_helper.py");
 
 impl EchoDecoder {
     fn spawn() -> anyhow::Result<Self> {
         use anyhow::Context;
         let mut child = Command::new("python3")
-            .arg(echo_helper_path())
+            .arg("-u")
+            .arg("-c")
+            .arg(ECHO_HELPER_SOURCE)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
