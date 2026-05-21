@@ -10,9 +10,9 @@ use base64::Engine;
 use crate::{
     command::protocol::{
         TopicBwStartRequest, TopicBwStartResponse, TopicBwStatusResponse, TopicBwStopResponse,
-        TopicDelayMessage, TopicDelayStartRequest, TopicDelayStartResponse, TopicDelayStats,
-        TopicDelayStatusResponse, TopicDelayStopResponse, TopicEchoMessage, TopicEchoStartRequest,
-        TopicEchoStartResponse, TopicEchoStatusResponse, TopicEchoStopResponse,
+        TopicDelayStartRequest, TopicDelayStartResponse, TopicDelayStats, TopicDelayStatusResponse,
+        TopicDelayStopResponse, TopicEchoMessage, TopicEchoStartRequest, TopicEchoStartResponse,
+        TopicEchoStatusResponse, TopicEchoStopResponse,
         TopicHzStartRequest, TopicHzStartResponse, TopicHzStatusResponse, TopicHzStopResponse,
     },
     protocols::RtpsDataMessage,
@@ -428,13 +428,10 @@ impl TopicEchoSession {
 
 // ── topic delay ───────────────────────────────────────────────────────────────
 
-const MAX_DELAY_PENDING: usize = 128;
-
 pub(super) struct TopicDelaySession {
     topic_name: String,
     delays: VecDeque<f64>,
     window_size: usize,
-    pending_messages: VecDeque<TopicDelayMessage>,
 }
 
 pub(super) fn delay_start_session(
@@ -457,7 +454,6 @@ pub(super) fn delay_start_session(
         topic_name: request.topic_name.clone(),
         delays: VecDeque::with_capacity(request.window_size.min(1024)),
         window_size: request.window_size,
-        pending_messages: VecDeque::with_capacity(MAX_DELAY_PENDING),
     });
     Ok(TopicDelayStartResponse { topic_name: request.topic_name })
 }
@@ -466,10 +462,20 @@ pub(super) fn delay_build_status_response(
     session: Option<&mut TopicDelaySession>,
 ) -> TopicDelayStatusResponse {
     let Some(session) = session else {
-        return TopicDelayStatusResponse { active: false, topic_name: None, messages: Vec::new() };
+        return TopicDelayStatusResponse {
+            active: false,
+            topic_name: None,
+            stats: None,
+            messages: Vec::new(),
+        };
     };
-    let messages = session.pending_messages.drain(..).collect::<Vec<_>>();
-    TopicDelayStatusResponse { active: true, topic_name: Some(session.topic_name.clone()), messages }
+    let stats = delay_stats_from_samples(&session.delays);
+    TopicDelayStatusResponse {
+        active: true,
+        topic_name: Some(session.topic_name.clone()),
+        stats,
+        messages: Vec::new(),
+    }
 }
 
 pub(super) fn delay_stop_session(
@@ -490,17 +496,9 @@ pub(super) fn delay_observe_message(
     if metadata.topic_name != session.topic_name {
         return;
     }
-    if session.pending_messages.len() == MAX_DELAY_PENDING {
-        session.pending_messages.pop_front();
-    }
     let Ok(received_at_nanos) = system_time_to_nanos(message.socket_timestamp) else {
         return;
     };
-    session.pending_messages.push_back(TopicDelayMessage {
-        type_name: metadata.type_name.clone(),
-        payload_base64: base64::engine::general_purpose::STANDARD.encode(&message.payload),
-        received_at_nanos,
-    });
 
     if let Some(stamp_nanos) = parse_cdr_stamp_nanos(&message.payload) {
         let delay_ms = if received_at_nanos >= stamp_nanos {
@@ -528,14 +526,17 @@ pub(super) fn delay_build_stats_response(
     session: Option<&TopicDelaySession>,
 ) -> Option<TopicDelayStats> {
     let session = session?;
-    if session.delays.is_empty() {
+    delay_stats_from_samples(&session.delays)
+}
+
+fn delay_stats_from_samples(delays: &VecDeque<f64>) -> Option<TopicDelayStats> {
+    if delays.is_empty() {
         return None;
     }
-    let window = session.delays.len();
-    let sum: f64 = session.delays.iter().sum();
+    let window = delays.len();
+    let sum: f64 = delays.iter().sum();
     let mean = sum / window as f64;
-    let variance = session
-        .delays
+    let variance = delays
         .iter()
         .map(|d| {
             let e = d - mean;
@@ -543,8 +544,8 @@ pub(super) fn delay_build_stats_response(
         })
         .sum::<f64>()
         / window as f64;
-    let min = session.delays.iter().copied().fold(f64::INFINITY, f64::min);
-    let max = session.delays.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let min = delays.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = delays.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     Some(TopicDelayStats { avg_ms: mean, min_ms: min, max_ms: max, std_dev_ms: variance.sqrt(), window })
 }
 

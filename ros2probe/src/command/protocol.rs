@@ -314,6 +314,8 @@ pub struct TopicDelayStatusResponse {
     pub active: bool,
     pub topic_name: Option<String>,
     #[serde(default)]
+    pub stats: Option<TopicDelayStats>,
+    #[serde(default)]
     pub messages: Vec<TopicDelayMessage>,
 }
 
