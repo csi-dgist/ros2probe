@@ -11,6 +11,8 @@ use crate::{
     recorder::{RecorderHandle, RecorderTopicGidMap},
 };
 
+const ROS_DISCOVERY_INFO_TOPIC: &str = "/ros_discovery_info";
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum CompressionConfig {
     #[default]
@@ -182,6 +184,9 @@ pub(super) fn record_message(
     if session.paused {
         return;
     }
+    if should_skip_discovery_topic(session, &metadata.topic_name) {
+        return;
+    }
     // `RtpsDataMessage::payload` is an `Arc<[u8]>`, so cloning the message
     // is just a refcount bump plus a handful of small field copies — no
     // payload allocation regardless of message size. Metadata (strings +
@@ -189,6 +194,18 @@ pub(super) fn record_message(
     let _queued = recorder_handle.try_record(message.clone(), metadata.clone());
     // Drops are tracked by the handle's counter; log at a low rate elsewhere
     // so we don't spam the log on overload.
+}
+
+fn should_skip_discovery_topic(session: &RecordingSession, topic_name: &str) -> bool {
+    if topic_name != ROS_DISCOVERY_INFO_TOPIC {
+        return false;
+    }
+
+    session.no_discovery
+        || !session
+            .topics
+            .iter()
+            .any(|topic| topic == ROS_DISCOVERY_INFO_TOPIC)
 }
 
 fn bag_record_options_from_request(request: BagRecordRequest) -> anyhow::Result<BagRecordOptions> {
@@ -235,4 +252,51 @@ fn compression_format_from_config(config: CompressionConfig) -> CompressionForma
 fn default_bag_output_path() -> PathBuf {
     let base = format!("rosbag2_{}", Local::now().format("%Y_%m_%d-%H_%M_%S"));
     PathBuf::from(&base).join(format!("{base}.mcap"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(topics: &[&str], no_discovery: bool) -> RecordingSession {
+        RecordingSession {
+            output: PathBuf::from("test.mcap"),
+            topics: topics.iter().map(|topic| topic.to_string()).collect(),
+            compression: CompressionConfig::None,
+            no_discovery,
+            paused: false,
+        }
+    }
+
+    #[test]
+    fn skips_discovery_metadata_unless_explicitly_requested() {
+        assert!(should_skip_discovery_topic(
+            &session(&["/stress"], false),
+            ROS_DISCOVERY_INFO_TOPIC
+        ));
+        assert!(should_skip_discovery_topic(
+            &session(&[], false),
+            ROS_DISCOVERY_INFO_TOPIC
+        ));
+        assert!(!should_skip_discovery_topic(
+            &session(&[ROS_DISCOVERY_INFO_TOPIC], false),
+            ROS_DISCOVERY_INFO_TOPIC
+        ));
+    }
+
+    #[test]
+    fn no_discovery_skips_even_when_explicitly_requested() {
+        assert!(should_skip_discovery_topic(
+            &session(&[ROS_DISCOVERY_INFO_TOPIC], true),
+            ROS_DISCOVERY_INFO_TOPIC
+        ));
+    }
+
+    #[test]
+    fn user_topics_are_not_skipped_by_discovery_policy() {
+        assert!(!should_skip_discovery_topic(
+            &session(&["/stress"], false),
+            "/stress"
+        ));
+    }
 }
