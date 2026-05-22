@@ -94,6 +94,19 @@ impl RecorderTopicGidMap {
             .or_else(|| self.metadata_for_gid(reader_gid))
     }
 
+    pub fn metadata_for_message_with_gid(
+        &self,
+        writer_gid: &TopicGid,
+        reader_gid: &TopicGid,
+    ) -> Option<(TopicGid, &RecorderTopicMetadata)> {
+        self.metadata_for_gid(writer_gid)
+            .map(|metadata| (*writer_gid, metadata))
+            .or_else(|| {
+                self.metadata_for_gid(reader_gid)
+                    .map(|metadata| (*reader_gid, metadata))
+            })
+    }
+
     pub fn contains_gid(&self, gid: &TopicGid) -> bool {
         self.current.contains_key(gid)
     }

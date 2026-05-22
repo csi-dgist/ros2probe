@@ -1,14 +1,19 @@
-use std::path::PathBuf;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::bail;
 use chrono::Local;
+use ros2probe_common::TopicGid;
 
 use crate::{
     command::protocol::{
         BagLostMessages, BagRecordRequest, BagRecordResponse, BagSessionInfo, BagSetPausedResponse,
         BagStatusResponse, BagStopResponse, CompressionFormat,
     },
-    recorder::{RecorderHandle, RecorderTopicGidMap},
+    recorder::{RecordMessage, RecorderHandle, RecorderTopicGidMap},
 };
 
 const ROS_DISCOVERY_INFO_TOPIC: &str = "/ros_discovery_info";
@@ -39,6 +44,8 @@ pub(super) struct RecordingSession {
     pub compression: CompressionConfig,
     pub no_discovery: bool,
     pub paused: bool,
+    channels: HashMap<TopicGid, u16>,
+    channel_sequences: HashMap<u16, u32>,
 }
 
 pub(super) fn normalize_topics(topics: &[String], source: &str) -> anyhow::Result<Vec<String>> {
@@ -110,6 +117,8 @@ pub(super) fn start_recording(
         compression: options.compression,
         no_discovery: options.no_discovery,
         paused: options.start_paused,
+        channels: HashMap::new(),
+        channel_sequences: HashMap::new(),
     })
 }
 
@@ -181,9 +190,10 @@ pub(super) fn build_bag_status_response(
 /// runtime thread; keep the work here trivial (no MCAP IO) — the actor is
 /// responsible for any blocking write, compression, and fsync.
 pub(super) fn record_message(
-    session: &RecordingSession,
+    session: &mut RecordingSession,
     recorder_handle: &RecorderHandle,
     message: &crate::protocols::RtpsDataMessage,
+    topic_gid: TopicGid,
     metadata: &crate::recorder::RecorderTopicMetadata,
 ) {
     if session.paused {
@@ -192,13 +202,48 @@ pub(super) fn record_message(
     if should_skip_discovery_topic(session, &metadata.topic_name) {
         return;
     }
-    // `RtpsDataMessage::payload` is an `Arc<[u8]>`, so cloning the message
-    // is just a refcount bump plus a handful of small field copies — no
-    // payload allocation regardless of message size. Metadata (strings +
-    // GID) is small, so cloning that is also cheap.
-    let _queued = recorder_handle.try_record(message.clone(), metadata.clone());
+
+    if !session.channels.contains_key(&topic_gid) {
+        let type_name = metadata.type_name.as_deref().unwrap_or("unknown/Unknown");
+        match recorder_handle.ensure_channel(&metadata.topic_name, type_name, "") {
+            Ok(channel_id) => {
+                session.channels.insert(topic_gid, channel_id);
+            }
+            Err(err) => {
+                log::warn!(
+                    "failed to create MCAP channel for {}: {err:#}",
+                    metadata.topic_name
+                );
+                return;
+            }
+        }
+    }
+
+    let Some(channel_id) = session.channels.get(&topic_gid).copied() else {
+        return;
+    };
+    let Ok(timestamp) = system_time_to_nanos(message.captured_at) else {
+        log::warn!("failed to convert message timestamp for {}", metadata.topic_name);
+        return;
+    };
+    let sequence = session.channel_sequences.entry(channel_id).or_insert(0);
+    let record = RecordMessage {
+        channel_id,
+        sequence: *sequence,
+        log_time: timestamp,
+        publish_time: timestamp,
+        payload: message.payload.clone(),
+    };
+    if recorder_handle.try_record(record, &metadata.topic_name) {
+        *sequence = sequence.saturating_add(1);
+    }
     // Drops are tracked by the handle's counter; log at a low rate elsewhere
     // so we don't spam the log on overload.
+}
+
+fn system_time_to_nanos(timestamp: SystemTime) -> anyhow::Result<u64> {
+    let duration = timestamp.duration_since(UNIX_EPOCH)?;
+    Ok(u64::try_from(duration.as_nanos())?)
 }
 
 fn should_skip_discovery_topic(session: &RecordingSession, topic_name: &str) -> bool {
@@ -270,6 +315,8 @@ mod tests {
             compression: CompressionConfig::None,
             no_discovery,
             paused: false,
+            channels: HashMap::new(),
+            channel_sequences: HashMap::new(),
         }
     }
 

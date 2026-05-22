@@ -21,8 +21,7 @@ use std::{
 use anyhow::Context;
 
 use crate::{
-    protocols::RtpsDataMessage,
-    recorder::{Recorder, RecorderTopicMetadata},
+    recorder::{RecordMessage, Recorder},
     runtime::CompressionConfig,
 };
 
@@ -33,9 +32,12 @@ use crate::{
 const RECORDER_CHANNEL_CAPACITY: usize = 1000;
 
 enum RecorderEvent {
-    Data {
-        message: RtpsDataMessage,
-        metadata: RecorderTopicMetadata,
+    Data(RecordMessage),
+    EnsureChannel {
+        topic_name: String,
+        schema_name: String,
+        qos_profile: String,
+        reply: mpsc::Sender<Result<u16, String>>,
     },
     Start {
         output: PathBuf,
@@ -92,6 +94,27 @@ impl RecorderHandle {
         reply.map_err(|err| anyhow::anyhow!(err))
     }
 
+    pub(crate) fn ensure_channel(
+        &self,
+        topic_name: &str,
+        schema_name: &str,
+        qos_profile: &str,
+    ) -> anyhow::Result<u16> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.tx
+            .send(RecorderEvent::EnsureChannel {
+                topic_name: topic_name.to_string(),
+                schema_name: schema_name.to_string(),
+                qos_profile: qos_profile.to_string(),
+                reply: reply_tx,
+            })
+            .context("recorder actor disconnected")?;
+        reply_rx
+            .recv()
+            .context("recorder actor dropped reply")?
+            .map_err(|err| anyhow::anyhow!(err))
+    }
+
     /// Finalize the current recording. Any data messages queued *before* this
     /// call are guaranteed to be written first (single channel, FIFO order).
     pub(crate) fn stop(&self) -> anyhow::Result<(Option<PathBuf>, Vec<(String, usize)>)> {
@@ -108,15 +131,11 @@ impl RecorderHandle {
 
     /// Non-blocking data send. Drops the message if the actor can't keep up
     /// (channel full). Returns `false` on drop or disconnect.
-    pub(crate) fn try_record(
-        &self,
-        message: RtpsDataMessage,
-        metadata: RecorderTopicMetadata,
-    ) -> bool {
-        match self.tx.try_send(RecorderEvent::Data { message, metadata }) {
+    pub(crate) fn try_record(&self, message: RecordMessage, topic_name: &str) -> bool {
+        match self.tx.try_send(RecorderEvent::Data(message)) {
             Ok(()) => true,
-            Err(mpsc::TrySendError::Full(RecorderEvent::Data { metadata, .. })) => {
-                self.record_drop(&metadata.topic_name);
+            Err(mpsc::TrySendError::Full(RecorderEvent::Data(_))) => {
+                self.record_drop(topic_name);
                 false
             }
             Err(mpsc::TrySendError::Disconnected(_)) => false,
@@ -174,14 +193,28 @@ fn actor_loop(rx: mpsc::Receiver<RecorderEvent>) {
     let mut active: Option<Recorder> = None;
     while let Ok(event) = rx.recv() {
         match event {
-            RecorderEvent::Data { message, metadata } => {
+            RecorderEvent::Data(message) => {
                 if let Some(recorder) = active.as_mut() {
-                    if let Err(err) = recorder.write_rtps_data_message(&message, &metadata) {
+                    if let Err(err) = recorder.write_record_message(&message) {
                         log::warn!("MCAP write failed: {err:#}");
                     }
                 }
                 // Else: session not active (message arrived before Start or
                 // after Stop). Silently discard.
+            }
+            RecorderEvent::EnsureChannel {
+                topic_name,
+                schema_name,
+                qos_profile,
+                reply,
+            } => {
+                let result = match active.as_mut() {
+                    Some(recorder) => recorder
+                        .ensure_channel(&topic_name, &schema_name, &qos_profile)
+                        .map_err(|err| format!("{err:#}")),
+                    None => Err(String::from("recorder actor has no active session")),
+                };
+                let _ = reply.send(result);
             }
             RecorderEvent::Start {
                 output,
@@ -214,9 +247,9 @@ fn actor_loop(rx: mpsc::Receiver<RecorderEvent>) {
             RecorderEvent::Shutdown => {
                 // Drain remaining data then finalize open recording.
                 while let Ok(event) = rx.try_recv() {
-                    if let RecorderEvent::Data { message, metadata } = event {
+                    if let RecorderEvent::Data(message) = event {
                         if let Some(recorder) = active.as_mut() {
-                            let _ = recorder.write_rtps_data_message(&message, &metadata);
+                            let _ = recorder.write_record_message(&message);
                         }
                     }
                     // Further commands after Shutdown are ignored.
