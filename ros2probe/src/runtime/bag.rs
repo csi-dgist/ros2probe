@@ -5,7 +5,7 @@ use chrono::Local;
 
 use crate::{
     command::protocol::{
-        BagRecordRequest, BagRecordResponse, BagSessionInfo, BagSetPausedResponse,
+        BagLostMessages, BagRecordRequest, BagRecordResponse, BagSessionInfo, BagSetPausedResponse,
         BagStatusResponse, BagStopResponse, CompressionFormat,
     },
     recorder::{RecorderHandle, RecorderTopicGidMap},
@@ -122,6 +122,7 @@ pub(super) fn stop_recording(
         return Ok(BagStopResponse {
             stopped: false,
             output: None,
+            lost_messages: Vec::new(),
         });
     };
 
@@ -131,10 +132,14 @@ pub(super) fn stop_recording(
     // `stop_recording` / shutdown), so `stop()` returns `Some(path)` here.
     // We still use `.map()` defensively rather than `.expect()` because a
     // future actor refactor might legitimately break that coupling.
-    let output = recorder_handle.stop()?;
+    let (output, lost_messages) = recorder_handle.stop()?;
     Ok(BagStopResponse {
         stopped: true,
         output: output.map(|p| p.display().to_string()),
+        lost_messages: lost_messages
+            .into_iter()
+            .map(|(topic_name, count)| BagLostMessages { topic_name, count })
+            .collect(),
     })
 }
 
