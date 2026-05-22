@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashMap},
     env,
     ffi::CString,
@@ -28,11 +29,20 @@ struct ChannelKey {
     qos_profile: String,
 }
 
+#[derive(Clone, Debug)]
+struct LastChannel {
+    topic: String,
+    schema_name: String,
+    qos_profile: String,
+    channel_id: u16,
+}
+
 pub struct Recorder {
     path: PathBuf,
     writer: Writer<BufWriter<File>>,
     schema_ids: HashMap<String, u16>,
     channel_ids: HashMap<ChannelKey, u16>,
+    last_channel: Option<LastChannel>,
     next_sequence: HashMap<u16, u32>,
     ament_prefixes: Vec<PathBuf>,
 }
@@ -68,6 +78,7 @@ impl Recorder {
             writer,
             schema_ids: HashMap::new(),
             channel_ids: HashMap::new(),
+            last_channel: None,
             next_sequence: HashMap::new(),
             ament_prefixes: ament_prefixes(),
         })
@@ -102,10 +113,45 @@ impl Recorder {
         qos_profile: &str,
     ) -> anyhow::Result<()> {
         let normalized_schema_name = normalize_schema_name(schema_name);
-        let schema_id = if let Some(schema_id) = self.schema_ids.get(&normalized_schema_name).copied() {
+        let channel_id =
+            self.channel_id_for(topic_name, normalized_schema_name.as_ref(), qos_profile)?;
+
+        let sequence = self.next_sequence.entry(channel_id).or_insert(0);
+        let timestamp = system_time_to_nanos(captured_at)?;
+        self.writer
+            .write_to_known_channel(
+                &MessageHeader {
+                    channel_id,
+                    sequence: *sequence,
+                    log_time: timestamp,
+                    publish_time: timestamp,
+                },
+                payload,
+            )
+            .context("write MCAP message")?;
+        *sequence = sequence.saturating_add(1);
+        Ok(())
+    }
+
+    fn channel_id_for(
+        &mut self,
+        topic_name: &str,
+        normalized_schema_name: &str,
+        qos_profile: &str,
+    ) -> anyhow::Result<u16> {
+        if let Some(last_channel) = &self.last_channel {
+            if last_channel.topic == topic_name
+                && last_channel.schema_name == normalized_schema_name
+                && last_channel.qos_profile == qos_profile
+            {
+                return Ok(last_channel.channel_id);
+            }
+        }
+
+        let schema_id = if let Some(schema_id) = self.schema_ids.get(normalized_schema_name).copied() {
             schema_id
         } else {
-            let resolved = resolve_schema(&normalized_schema_name, &self.ament_prefixes)
+            let resolved = resolve_schema(normalized_schema_name, &self.ament_prefixes)
                 .with_context(|| format!("resolve schema {normalized_schema_name}"))?;
             let schema_id = self
                 .writer
@@ -116,13 +162,13 @@ impl Recorder {
                 )
                 .context("add MCAP schema")?;
             self.schema_ids
-                .insert(normalized_schema_name.clone(), schema_id);
+                .insert(normalized_schema_name.to_string(), schema_id);
             schema_id
         };
 
         let channel_key = ChannelKey {
             topic: topic_name.to_string(),
-            schema_name: normalized_schema_name.clone(),
+            schema_name: normalized_schema_name.to_string(),
             qos_profile: qos_profile.to_string(),
         };
         let channel_id = if let Some(channel_id) = self.channel_ids.get(&channel_key).copied() {
@@ -141,21 +187,13 @@ impl Recorder {
             channel_id
         };
 
-        let sequence = self.next_sequence.entry(channel_id).or_insert(0);
-        let timestamp = system_time_to_nanos(captured_at)?;
-        self.writer
-            .write_to_known_channel(
-                &MessageHeader {
-                    channel_id,
-                    sequence: *sequence,
-                    log_time: timestamp,
-                    publish_time: timestamp,
-                },
-                payload,
-            )
-            .context("write MCAP message")?;
-        *sequence = sequence.saturating_add(1);
-        Ok(())
+        self.last_channel = Some(LastChannel {
+            topic: topic_name.to_string(),
+            schema_name: normalized_schema_name.to_string(),
+            qos_profile: qos_profile.to_string(),
+            channel_id,
+        });
+        Ok(channel_id)
     }
 }
 
@@ -312,10 +350,14 @@ fn parse_dds_type_name(name: &str) -> Option<(&str, &str, &str)> {
     Some((package, kind, type_name))
 }
 
-fn normalize_schema_name(name: &str) -> String {
+fn normalize_schema_name(name: &str) -> Cow<'_, str> {
+    if name.contains('/') {
+        return Cow::Borrowed(name);
+    }
+
     ParsedTypeName::parse(name)
-        .map(|parsed| parsed.normalized_name())
-        .unwrap_or_else(|_| name.to_string())
+        .map(|parsed| Cow::Owned(parsed.normalized_name()))
+        .unwrap_or(Cow::Borrowed(name))
 }
 
 fn rosbag2_metadata() -> Metadata {
