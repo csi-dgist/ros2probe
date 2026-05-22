@@ -426,12 +426,20 @@ pub struct BagStatusResponse {
 pub struct BagStopResponse {
     pub stopped: bool,
     pub output: Option<String>,
+    #[serde(default)]
+    pub lost_messages: Vec<BagLostMessages>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct BagSetPausedResponse {
     pub active: bool,
     pub paused: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BagLostMessages {
+    pub topic_name: String,
+    pub count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

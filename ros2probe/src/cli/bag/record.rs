@@ -9,12 +9,12 @@ use tokio::runtime::Runtime;
 
 use crate::command::{
     protocol::{
-        BagRecordRequest, BagSetPausedRequest, BagStopRequest, CommandRequest, CommandResponse,
-        CompressionFormat,
+        BagLostMessages, BagRecordRequest, BagSetPausedRequest, BagStopRequest, CommandRequest,
+        CommandResponse, CompressionFormat,
     },
 };
 
-use super::util::{info_log, send_request};
+use super::util::{info_log, send_request, warn_log};
 
 #[derive(Debug, Args)]
 pub struct BagRecordCommand {
@@ -147,6 +147,7 @@ fn wait_for_controls(mut paused: bool) -> anyhow::Result<()> {
                                 } else {
                                     info_log("ros2probe_storage", "Closed bag.");
                                 }
+                                print_lost_message_warning(&response.lost_messages);
                                 info_log("ros2probe_recorder", "Recording stopped");
                             } else {
                                 info_log("ros2probe_recorder", "Recording already stopped");
@@ -161,6 +162,23 @@ fn wait_for_controls(mut paused: bool) -> anyhow::Result<()> {
             }
         }
     })
+}
+
+fn print_lost_message_warning(lost_messages: &[BagLostMessages]) {
+    if lost_messages.is_empty() {
+        return;
+    }
+
+    let total = lost_messages
+        .iter()
+        .map(|lost| lost.count)
+        .sum::<usize>();
+    let mut message = String::from("Cache buffers lost messages per topic: ");
+    for lost in lost_messages {
+        message.push_str(&format!("\n\t{}: {}", lost.topic_name, lost.count));
+    }
+    message.push_str(&format!("\nTotal lost: {total}"));
+    warn_log("ros2probe_storage", message);
 }
 
 fn spawn_input_reader() -> mpsc::Receiver<u8> {

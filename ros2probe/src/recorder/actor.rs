@@ -8,11 +8,12 @@
 //!   to be written to the MCAP before the recording is finalized.
 
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
-        mpsc,
+        mpsc, Mutex,
     },
     thread,
 };
@@ -50,6 +51,7 @@ enum RecorderEvent {
 pub(crate) struct RecorderHandle {
     tx: mpsc::SyncSender<RecorderEvent>,
     dropped_count: Arc<AtomicUsize>,
+    dropped_by_topic: Arc<Mutex<BTreeMap<String, usize>>>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -57,6 +59,7 @@ impl RecorderHandle {
     pub(crate) fn spawn() -> Self {
         let (tx, rx) = mpsc::sync_channel(RECORDER_CHANNEL_CAPACITY);
         let dropped_count = Arc::new(AtomicUsize::new(0));
+        let dropped_by_topic = Arc::new(Mutex::new(BTreeMap::new()));
         let thread = thread::Builder::new()
             .name(String::from("ros2probe-recorder"))
             .spawn(move || actor_loop(rx))
@@ -64,6 +67,7 @@ impl RecorderHandle {
         Self {
             tx,
             dropped_count,
+            dropped_by_topic,
             thread: Some(thread),
         }
     }
@@ -75,6 +79,7 @@ impl RecorderHandle {
         output: PathBuf,
         compression: CompressionConfig,
     ) -> anyhow::Result<()> {
+        self.reset_drop_counts();
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .send(RecorderEvent::Start {
@@ -89,15 +94,16 @@ impl RecorderHandle {
 
     /// Finalize the current recording. Any data messages queued *before* this
     /// call are guaranteed to be written first (single channel, FIFO order).
-    pub(crate) fn stop(&self) -> anyhow::Result<Option<PathBuf>> {
+    pub(crate) fn stop(&self) -> anyhow::Result<(Option<PathBuf>, Vec<(String, usize)>)> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.tx
             .send(RecorderEvent::Stop { reply: reply_tx })
             .context("recorder actor disconnected")?;
-        reply_rx
+        let output = reply_rx
             .recv()
             .context("recorder actor dropped reply")?
-            .map_err(|err| anyhow::anyhow!(err))
+            .map_err(|err| anyhow::anyhow!(err))?;
+        Ok((output, self.drop_counts()))
     }
 
     /// Non-blocking data send. Drops the message if the actor can't keep up
@@ -107,16 +113,14 @@ impl RecorderHandle {
         message: RtpsDataMessage,
         metadata: RecorderTopicMetadata,
     ) -> bool {
-        match self
-            .tx
-            .try_send(RecorderEvent::Data { message, metadata })
-        {
+        match self.tx.try_send(RecorderEvent::Data { message, metadata }) {
             Ok(()) => true,
-            Err(mpsc::TrySendError::Full(_)) => {
-                self.dropped_count.fetch_add(1, Ordering::Relaxed);
+            Err(mpsc::TrySendError::Full(RecorderEvent::Data { metadata, .. })) => {
+                self.record_drop(&metadata.topic_name);
                 false
             }
             Err(mpsc::TrySendError::Disconnected(_)) => false,
+            Err(mpsc::TrySendError::Full(_)) => false,
         }
     }
 
@@ -126,6 +130,32 @@ impl RecorderHandle {
     #[allow(dead_code)]
     pub(crate) fn dropped_count(&self) -> usize {
         self.dropped_count.load(Ordering::Relaxed)
+    }
+
+    fn record_drop(&self, topic_name: &str) {
+        self.dropped_count.fetch_add(1, Ordering::Relaxed);
+        let mut dropped_by_topic = self
+            .dropped_by_topic
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        *dropped_by_topic.entry(topic_name.to_string()).or_insert(0) += 1;
+    }
+
+    fn reset_drop_counts(&self) {
+        self.dropped_count.store(0, Ordering::Relaxed);
+        self.dropped_by_topic
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .clear();
+    }
+
+    fn drop_counts(&self) -> Vec<(String, usize)> {
+        self.dropped_by_topic
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .iter()
+            .map(|(topic_name, count)| (topic_name.clone(), *count))
+            .collect()
     }
 }
 
@@ -203,4 +233,3 @@ fn actor_loop(rx: mpsc::Receiver<RecorderEvent>) {
         let _ = recorder.finish();
     }
 }
-

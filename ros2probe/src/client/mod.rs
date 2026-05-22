@@ -29,11 +29,20 @@ pub fn send_request(request: CommandRequest) -> anyhow::Result<CommandResponse> 
 }
 
 pub fn info_log(target: &str, message: impl AsRef<str>) {
+    log_line("INFO", target, message);
+}
+
+pub fn warn_log(target: &str, message: impl AsRef<str>) {
+    log_line("WARN", target, message);
+}
+
+fn log_line(level: &str, target: &str, message: impl AsRef<str>) {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     println!(
-        "[INFO] [{}.{:09}] [{}]: {}",
+        "[{}] [{}.{:09}] [{}]: {}",
+        level,
         now.as_secs(),
         now.subsec_nanos(),
         target,
