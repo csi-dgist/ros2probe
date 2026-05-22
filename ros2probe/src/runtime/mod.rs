@@ -538,9 +538,10 @@ fn handle_data_message(
     recorder_handle: &RecorderHandle,
 ) -> bool {
     let mut node_table_dirty = false;
-    let gid_metadata = gid_map.metadata_for_message(&message.writer_gid, &message.reader_gid);
+    let gid_metadata =
+        gid_map.metadata_for_message_with_gid(&message.writer_gid, &message.reader_gid);
     let topic_name = gid_metadata
-        .map(|metadata| metadata.topic_name.as_str())
+        .map(|(_, metadata)| metadata.topic_name.as_str())
         .or_else(|| {
             discovery_table
                 .publication(&message.writer_gid)
@@ -561,12 +562,12 @@ fn handle_data_message(
         }
     }
 
-    let Some(metadata) = gid_metadata else {
+    let Some((topic_gid, metadata)) = gid_metadata else {
         return node_table_dirty;
     };
 
     if let Some(session) = recording_session {
-        bag::record_message(session, recorder_handle, &message, metadata);
+        bag::record_message(session, recorder_handle, &message, topic_gid, metadata);
     }
     observers::bw_observe_message(topic_bw_session, &message, metadata);
     observers::delay_observe_message(topic_delay_session, &message, metadata);

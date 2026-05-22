@@ -6,27 +6,32 @@ use std::{
     fs::{self, File},
     io::BufWriter,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, bail};
+use bytes::Bytes;
 use libc;
 use mcap::{
     records::{MessageHeader, Metadata},
     Compression, WriteOptions, Writer,
 };
 
-use crate::{
-    protocols::rtps::RtpsDataMessage,
-    recorder::gid_map::RecorderTopicMetadata,
-    runtime::CompressionConfig,
-};
+use crate::runtime::CompressionConfig;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct ChannelKey {
     topic: String,
     schema_name: String,
     qos_profile: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RecordMessage {
+    pub channel_id: u16,
+    pub sequence: u32,
+    pub log_time: u64,
+    pub publish_time: u64,
+    pub payload: Bytes,
 }
 
 #[derive(Clone, Debug)]
@@ -43,7 +48,6 @@ pub struct Recorder {
     schema_ids: HashMap<String, u16>,
     channel_ids: HashMap<ChannelKey, u16>,
     last_channel: Option<LastChannel>,
-    next_sequence: HashMap<u16, u32>,
     ament_prefixes: Vec<PathBuf>,
 }
 
@@ -79,58 +83,38 @@ impl Recorder {
             schema_ids: HashMap::new(),
             channel_ids: HashMap::new(),
             last_channel: None,
-            next_sequence: HashMap::new(),
             ament_prefixes: ament_prefixes(),
         })
     }
 
-    pub fn write_rtps_data_message(
+    pub(crate) fn ensure_channel(
         &mut self,
-        message: &RtpsDataMessage,
-        metadata: &RecorderTopicMetadata,
-    ) -> anyhow::Result<()> {
-        self.write_message(
-            message.captured_at,
-            &message.payload,
-            &metadata.topic_name,
-            metadata.type_name.as_deref().unwrap_or("unknown/Unknown"),
-            "",
-        )
-    }
-
-    pub fn finish(mut self) -> anyhow::Result<PathBuf> {
-        self.writer.finish().context("finish MCAP writer")?;
-        restore_ownership(&self.path);
-        Ok(self.path)
-    }
-
-    fn write_message(
-        &mut self,
-        captured_at: SystemTime,
-        payload: &[u8],
         topic_name: &str,
         schema_name: &str,
         qos_profile: &str,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<u16> {
         let normalized_schema_name = normalize_schema_name(schema_name);
-        let channel_id =
-            self.channel_id_for(topic_name, normalized_schema_name.as_ref(), qos_profile)?;
+        self.channel_id_for(topic_name, normalized_schema_name.as_ref(), qos_profile)
+    }
 
-        let sequence = self.next_sequence.entry(channel_id).or_insert(0);
-        let timestamp = system_time_to_nanos(captured_at)?;
+    pub(crate) fn write_record_message(&mut self, message: &RecordMessage) -> anyhow::Result<()> {
         self.writer
             .write_to_known_channel(
                 &MessageHeader {
-                    channel_id,
-                    sequence: *sequence,
-                    log_time: timestamp,
-                    publish_time: timestamp,
+                    channel_id: message.channel_id,
+                    sequence: message.sequence,
+                    log_time: message.log_time,
+                    publish_time: message.publish_time,
                 },
-                payload,
+                &message.payload,
             )
-            .context("write MCAP message")?;
-        *sequence = sequence.saturating_add(1);
-        Ok(())
+            .context("write MCAP message")
+    }
+
+    pub(crate) fn finish(mut self) -> anyhow::Result<PathBuf> {
+        self.writer.finish().context("finish MCAP writer")?;
+        restore_ownership(&self.path);
+        Ok(self.path)
     }
 
     fn channel_id_for(
@@ -370,13 +354,6 @@ fn rosbag2_metadata() -> Metadata {
         name: String::from("rosbag2"),
         metadata,
     }
-}
-
-fn system_time_to_nanos(timestamp: SystemTime) -> anyhow::Result<u64> {
-    let duration = timestamp
-        .duration_since(UNIX_EPOCH)
-        .context("timestamp earlier than UNIX_EPOCH")?;
-    u64::try_from(duration.as_nanos()).context("timestamp does not fit in u64 nanoseconds")
 }
 
 // When rp runs as sudo, recorded files are owned by root.
