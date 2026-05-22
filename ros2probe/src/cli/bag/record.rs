@@ -34,7 +34,7 @@ pub struct BagRecordCommand {
     #[arg(long = "compression-format", value_enum)]
     pub compression_format: Option<BagCompressionFormat>,
 
-    /// Only record topics discovered when recording starts
+    /// Do not record /ros_discovery_info if it is explicitly selected
     #[arg(long = "no-discovery")]
     pub no_discovery: bool,
 
