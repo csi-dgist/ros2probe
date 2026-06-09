@@ -7,42 +7,6 @@ Host-level observability for ROS 2 DDS traffic — without creating ROS 2 subscr
 ros2probe attaches an eBPF socket filter to every non-loopback network interface, captures RTPS/DDS packets in the kernel, and reconstructs the full ROS graph, topic metrics, and message streams entirely in userspace. A CLI (`rp`) and a desktop GUI (`rp gui`) talk to the runtime over a Unix socket.
 
 ---
-
-## How It Works
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  Linux Kernel                                            │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │  eBPF socket filter (ebpf/)                         │ │
-│  │  • Attached to AF_PACKET sockets (one per iface)    │ │
-│  │  • Passes only RTPS/DDS UDP packets, drops the rest │ │
-│  │  • Checks GID filter map to allow specific topics   │ │
-│  └──────────────────────┬──────────────────────────────┘ │
-│                         │ TPACKET_V3 ring buffer         │
-│  ┌──────────────────────▼──────────────────────────────┐ │
-│  │  AF_PACKET socket (netring / TPACKET_V3)            │ │
-│  │  • Zero-copy batch reads from kernel ring buffer    │ │
-│  └──────────────────────┬──────────────────────────────┘ │
-└─────────────────────────│────────────────────────────────┘
-                          │ mmap'd ring buffer read
-┌─────────────────────────▼────────────────────────────────┐
-│  Runtime  (rp run)                                       │
-│  • IPv4/IPv6 fragment reassembly                         │
-│  • RTPS/SPDP/SEDP discovery reconstruction               │
-│  • GID → node name mapping via ros_discovery_info        │
-│  • Topic graph: publishers, subscribers, SHM vs network  │
-│  • Live hz / bw / delay / echo observers                 │
-│  • MCAP bag recorder                                     │
-│  • Command socket  /tmp/ros2probe.sock                   │
-└────────────┬─────────────────────────┬───────────────────┘
-             │ Unix socket (JSON-RPC)  │
-     ┌───────▼──────┐         ┌────────▼────────┐
-     │  rp (CLI)    │         │  rp gui         │
-     │  topic / bag │         │  Dashboard      │
-     │  node / svc  │         │  Topic Monitor  │
-     │  action      │         │  Bag Recorder   │
-     └──────────────┘         └─────────────────┘
 ```
 
 > **DDS middleware only.** Zenoh support is planned.
