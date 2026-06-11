@@ -1,16 +1,18 @@
 # ros2probe
 
-https://csi-dgist.github.io/ros2probe-page/
+[![Release](https://img.shields.io/github/v/release/csi-dgist/ros2probe)](https://github.com/csi-dgist/ros2probe/releases/latest)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![arXiv](https://img.shields.io/badge/arXiv-2606.10746-b31b1b.svg)](https://arxiv.org/abs/2606.10746)
 
 Host-level observability for ROS 2 DDS traffic — without creating ROS 2 subscriptions.
 
-ros2probe attaches an eBPF socket filter to every non-loopback network interface, captures RTPS/DDS packets in the kernel, and reconstructs the full ROS graph, topic metrics, and message streams entirely in userspace. A CLI (`rp`) and a desktop GUI (`rp gui`) talk to the runtime over a Unix socket.
+ros2probe attaches an eBPF socket filter to every non-loopback network interface, captures RTPS/DDS packets in the kernel, and reconstructs the full ROS graph, topic metrics, and message streams entirely in userspace. A CLI (`rp`) and a desktop GUI (`rp gui`) talk to the runtime over a Unix socket. DDS middleware only; Zenoh support is planned.
 
----
+**Website:** https://csi-dgist.github.io/ros2probe-page/
 
-> **DDS middleware only.** Zenoh support is planned.
+![ros2probe GUI — live ROS graph, topic metrics, and bag recording](docs/dashboard.png)
 
----
+*More screenshots and live video demos are on the [project page](https://csi-dgist.github.io/ros2probe-page/).*
 
 ## Features
 
@@ -19,25 +21,11 @@ ros2probe attaches an eBPF socket filter to every non-loopback network interface
 - **SHM vs network distinction** — topics communicated exclusively over shared memory (FastDDS/CycloneDDS SHM locators) are identified and excluded from recording
 - **Live topic metrics** — publish rate (hz), bandwidth (bw), end-to-end delay, and message echo with sliding-window statistics
 - **MCAP recording** — bag files with optional zstd/lz4 compression, pause/resume, and topic selection
-- **Recordable topic classification** — tf, parameter_events, rosout, debug topics, and SHM-only topics are automatically separated from recordable topics in all UIs
-- **CLI + GUI** — same data exposed through both interfaces
-
----
-
-## Requirements
-
-| Requirement | Notes |
-|---|---|
-| Linux 5.15+ | eBPF socket filter, AF_PACKET TPACKET_V3 |
-| ROS 2 Humble+ | Iron, Jazzy, Rolling also supported |
-| Python 3 + `rclpy` | Only for `rp topic echo` / `rp topic delay` |
-| Optional | Jumbo frames, DDS XML profile that avoids IP fragmentation |
-
----
+- **CLI + GUI** — the same data exposed through both interfaces
 
 ## Install
 
-No Rust, no compiler, no build dependencies required — just download and run.
+No Rust, no compiler, no build dependencies — just download and run. The script detects your architecture and installs `rp` to `/usr/local/bin`.
 
 ```sh
 # CLI only (default)
@@ -47,223 +35,81 @@ curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/insta
 curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/install.sh | sh -s -- --gui
 ```
 
-Automatically detects your architecture and installs `rp` to `/usr/local/bin`.
+Prebuilt binaries are provided for **x86-64** and **aarch64** (Raspberry Pi 4/5, Jetson); the GUI build is x86-64 only. Uninstall with `sudo rm /usr/local/bin/rp`.
 
-| Binary | Architecture | GUI |
-|---|---|---|
-| `rp-linux-x86_64` | x86-64 | |
-| `rp-linux-x86_64-gui` | x86-64 | ✓ |
-| `rp-linux-aarch64` | Raspberry Pi 4/5, Jetson (64-bit OS) | |
+**Requirements**
 
-## Uninstall
-
-```sh
-sudo rm /usr/local/bin/rp
-```
-
----
+| Requirement | Notes |
+|---|---|
+| Linux 5.15+ | eBPF socket filter, AF_PACKET TPACKET_V3 |
+| ROS 2 Humble+ | Iron, Jazzy, Rolling also supported |
+| Python 3 + `rclpy` | Only for `rp topic echo` |
+| Optional | Jumbo frames, or a DDS XML profile that avoids IP fragmentation |
 
 ## Quick Start
 
-**Host A**:
+Run a publisher and subscriber on two hosts (or the same host):
 
 ```sh
+# Host A
 ros2 run demo_nodes_cpp talker
-```
-
-**Host B**:
-
-```sh
+# Host B
 ros2 run demo_nodes_cpp listener
 ```
 
-**Host A or B** (run ros2probe on either host to observe network traffic):
+Then observe the traffic with ros2probe on either host:
 
 ```sh
-# Start the runtime
-rp run
+rp run                                 # start the runtime (separate terminal)
 
-# In another terminal, observe with rp
-rp topic list
-rp topic hz /chatter
-rp topic bw /chatter
-rp bag record /chatter -o session.mcap
+rp topic list                          # what's on the wire
+rp topic hz /chatter                   # live publish rate
+rp bag record /chatter -o session.mcap # record to MCAP
 
-# Or open the GUI
-rp gui
+rp gui                                 # or explore visually
 ```
 
----
+## Commands
 
-## CLI Reference
-
-### `rp run`
-
-Starts the runtime daemon. Automatically re-executes with `sudo` if not already root (prompts for password if needed).
-
-```sh
-rp run
-```
-
----
-
-### `rp gui`
-
-Launches the desktop GUI. The runtime (`rp run`) must already be running.
-
-```sh
-rp gui
-```
-
----
-
-### `rp topic`
+Run `rp <command> --help` for the full set of flags and options.
 
 | Command | Description |
 |---|---|
-| `rp topic list` | List all topics; recordable topics shown first, internal topics in a separate section |
-| `rp topic info <topic>` | Publishers, subscribers, type, and QoS |
-| `rp topic type <topic>` | Print topic type string |
-| `rp topic find <type>` | Find topics matching a given type |
-| `rp topic hz <topic>` | Live publish rate with mean/min/max/stddev |
-| `rp topic bw <topic>` | Live bandwidth with mean/min/max message sizes |
-| `rp topic delay <topic>` | End-to-end delay from `header.stamp` with statistics |
-| `rp topic echo <topic>` | Stream decoded messages (requires Python + rclpy) |
+| `rp run` | Start the runtime daemon (auto-escalates to root if needed) |
+| `rp gui` | Launch the desktop GUI (the runtime must already be running) |
+| `rp topic list` | List topics — recordable first, internal topics separated |
+| `rp topic info` / `type` / `find` | Endpoints & QoS, type string, or find topics by type |
+| `rp topic hz` / `bw` / `delay` | Live publish rate / bandwidth / end-to-end delay with statistics |
+| `rp topic echo` | Stream decoded messages (requires Python + `rclpy`) |
+| `rp bag record [TOPICS…]` | Record an MCAP bag — `--all`, `-o <file>`, `--compression-format`, pause/resume |
+| `rp node list` / `info` | Discovered nodes and their endpoints |
+| `rp service list` / `type` / `find` | Service introspection |
+| `rp action list` / `info` | Action introspection |
+| `rp discover` | Force a `ros_discovery_info` broadcast to refresh a stale graph |
 
-**Common flags:**
-
-```
--w, --window <N>    Sliding window size for statistics (default: 10000 for hz/delay, 100 for bw)
---raw               Print raw bytes instead of decoded fields (echo)
---field <path>      Extract a single field, e.g. --field pose.pose.position (echo)
---once              Print one message then exit (echo)
---csv               CSV output for piping to plotting tools (echo)
-```
-
-> **Note:** Internal topics (tf, `parameter_events`, `rosout`, debug topics, SHM-only topics) are not supported by `hz`, `bw`, `delay`, or `echo` and will produce no output.
-
----
-
-### `rp bag`
-
-| Command | Description |
-|---|---|
-| `rp bag record [TOPICS...]` | Record listed topics to an MCAP file |
-| `rp bag record --all` | Record all recordable topics |
-
-**Flags:**
-
-```
--a, --all                       Record all recordable topics
--o, --output <FILE>             Output file path (default: rosbag2_<timestamp>.mcap)
-    --compression-format <FMT>  none | zstd | lz4 (default: none)
-    --no-discovery              Skip ros_discovery_info topic
-    --start-paused              Begin in paused state
-```
-
-**Interactive controls while recording:**
-
-| Key | Action |
-|---|---|
-| `Space` | Pause / Resume |
-| `Ctrl+C` | Stop and finalize |
-
-> **Note:** Internal topics are never captured even with `--all`.
-
----
-
-### `rp node`
-
-| Command | Description |
-|---|---|
-| `rp node list` | List all discovered nodes |
-| `rp node info <node>` | Publishers, subscribers, services, and actions for a node |
-
----
-
-### `rp service`
-
-| Command | Description |
-|---|---|
-| `rp service list` | List all services |
-| `rp service type <service>` | Print service type |
-| `rp service find <type>` | Find services by type |
-
----
-
-### `rp action`
-
-| Command | Description |
-|---|---|
-| `rp action list` | List all actions |
-| `rp action info <action>` | Print action details |
-
----
-
-### `rp discover`
-
-Forces a `ros_discovery_info` broadcast over UDP, which triggers participant re-announcement from all running nodes. Useful when graph state appears stale.
-
-```sh
-rp discover
-```
-
----
+> **Internal topics** (tf, `parameter_events`, `rosout`, debug, and SHM-only topics) produce no output for `hz` / `bw` / `delay` / `echo`, and are never captured by `rp bag` — even with `--all`.
 
 ## GUI
 
-Launch with:
+`rp gui` opens a desktop app with three pages:
 
-```sh
-rp gui
-```
-
-The GUI connects to the runtime on startup and refreshes state periodically. Three pages are available:
-
-### Dashboard
-
-- Live ROS resource counts (nodes, topics)
-- System metrics (CPU, memory, network I/O) with scrolling history charts
-- Interactive ROS graph with pan/zoom
-- **Graph filters** (all enabled by default):
-  - Hide tf topics
-  - Hide parameter topics
-  - Hide debug/rosout topics
-  - Hide leaf topics (no subscribers)
-  - Hide network-only (SHM-only) topics
-
-### Topic Monitor
-
-- Select any topic from the graph view
-- Live **hz**, **bw**, and **delay** panels with history charts and statistics
-- **Echo** panel showing the last 100 decoded messages
-- Configurable window size
-- Recordable topics shown at top; internal topics collapsed under a toggle
-
-### Bag Recorder
-
-- Topic list with recordable/internal separation
-- Multi-topic selection, compression format, output path picker
-- Live recording status: elapsed time, file size, messages per topic
-- Pause/resume button
-
----
+- **Dashboard** — live node/topic counts, system metrics (CPU, memory, network I/O) with history charts, and an interactive ROS graph. Filters for tf, parameter, debug, leaf, and SHM-only topics are on by default.
+- **Topic Monitor** — per-topic hz / bw / delay panels with history charts and statistics, plus an echo view of the last 100 decoded messages.
+- **Bag Recorder** — multi-topic selection, compression and output options, and live recording status (elapsed time, file size, per-topic message counts) with pause/resume.
 
 ## Topic Classification
 
-ros2probe classifies every topic into **recordable** or **internal**:
+ros2probe classifies every topic as **recordable** or **internal**. A topic is recordable only if it passes all of these filters:
 
 | Category | Criteria |
 |---|---|
-| **tf topics** | Name starts with `/tf` |
-| **Parameter topics** | Name contains `/parameter_events` or `/rosout` |
-| **Debug topics** | Name contains `/_` (hidden/debug convention) |
-| **Leaf topics** | No active subscribers |
-| **SHM-only topics** | No publisher or subscriber participant seen from a remote IP via SPDP |
+| tf topics | Name starts with `/tf` |
+| Parameter topics | Name contains `/parameter_events` or `/rosout` |
+| Debug topics | Name contains `/_` (hidden/debug convention) |
+| Leaf topics | No active subscribers |
+| SHM-only topics | No publisher or subscriber participant seen from a remote IP via SPDP |
 
-A topic is **recordable** only if it passes all five filters. Internal topics remain visible in the GUI (under a collapsible section) so their info and graph connections can still be inspected.
-
----
+Internal topics stay visible in the GUI (under a collapsible section) so their info and graph connections can still be inspected.
 
 ## Project Layout
 
@@ -273,12 +119,10 @@ ros2probe/
 │   ├── src/filter.rs     # Socket filter entry point
 │   ├── src/rtps.rs       # RTPS header parsing in kernel
 │   └── src/maps.rs       # Shared maps
-│
 ├── common/               # Shared kernel↔userspace types (no_std)
 │   ├── src/ebpf.rs       # Map key/value types
 │   ├── src/rtps.rs       # RTPS structs
 │   └── src/event.rs      # Event definitions
-│
 └── ros2probe/            # Userspace runtime + CLI + GUI
     └── src/
         ├── bin/          # rp (CLI + runtime + GUI entry points)
@@ -292,15 +136,11 @@ ros2probe/
         └── runtime/      # Main event loop, observers
 ```
 
----
+## Citation
 
-## Paper
+ros2probe is described in our paper, available on arXiv: <https://arxiv.org/abs/2606.10746>
 
-ros2probe is described in our paper:
-
-> **ros2probe: Non-intrusive, Kernel-selective Observability for Robot Operating System 2 Middleware**
-> Jisang Yu, Sanghoon Lee, Yeonwoo Choi, Kyung-Joon Park. 2026.
-> arXiv:2606.10746 — <https://arxiv.org/abs/2606.10746>
+If you use ros2probe in your research, please cite it:
 
 ```bibtex
 @misc{yu2026ros2probe,
@@ -314,16 +154,15 @@ ros2probe is described in our paper:
 }
 ```
 
----
+## License
+
+ros2probe is licensed under the [Apache License 2.0](LICENSE). The eBPF kernel program is dual-licensed [GPL-2.0](LICENSE-GPL2) OR Apache-2.0, so it can declare a GPL-compatible license to the kernel's BPF verifier.
 
 ## Contact
 
-ros2probe is developed at the **DGIST CSI Lab**. For questions about the design,
-collaboration proposals, bug reports that don't fit a GitHub issue, or anything
-else related to the project or the accompanying paper, feel free to reach out:
+ros2probe is developed at the **DGIST CSI Lab**. For design questions, collaboration proposals, or anything about the project or the paper, reach out to:
 
 - Sanghoon Lee — leesh2913@dgist.ac.kr
 - Jisang Yu — julienyu@dgist.ac.kr
 
-GitHub issues are still the preferred channel for reproducible bugs and feature
-requests so the discussion stays public.
+For reproducible bugs and feature requests, please open a GitHub issue so the discussion stays public.
