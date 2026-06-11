@@ -1,18 +1,18 @@
 # ros2probe
 
 [![Release](https://img.shields.io/badge/release-v0.1.1-blue)](https://github.com/csi-dgist/ros2probe/releases/latest)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0_%7C_GPL--2.0-blue.svg)](LICENSE)
 [![arXiv](https://img.shields.io/badge/arXiv-2606.10746-b31b1b.svg)](https://arxiv.org/abs/2606.10746)
 
 Host-level observability for ROS 2 DDS traffic — without creating ROS 2 subscriptions.
 
 ros2probe attaches an eBPF socket filter to every non-loopback network interface, captures RTPS/DDS packets in the kernel, and reconstructs the full ROS graph, topic metrics, and message streams entirely in userspace. A CLI (`rp`) and a desktop GUI (`rp gui`) talk to the runtime over a Unix socket. DDS middleware only; Zenoh support is planned.
 
-**Website:** https://csi-dgist.github.io/ros2probe-page/
+**Project page:** https://csi-dgist.github.io/ros2probe-page/
 
-![ros2probe GUI — live ROS graph, topic metrics, and bag recording](docs/dashboard.png)
+![ros2probe GUI live demo — ROS graph, topic metrics, and bag recording](docs/demo-gui.gif)
 
-*More screenshots and live video demos are on the [project page](https://csi-dgist.github.io/ros2probe-page/).*
+*More screenshots and demos are on the project page.*
 
 ## Features
 
@@ -103,8 +103,6 @@ Run `rp <command> --help` for the full set of flags and options.
 
 ## Citation
 
-ros2probe is described in our paper, available on arXiv: <https://arxiv.org/abs/2606.10746>
-
 If you use ros2probe in your research, please cite it:
 
 ```bibtex
@@ -121,7 +119,7 @@ If you use ros2probe in your research, please cite it:
 
 ## License
 
-ros2probe is licensed under the [Apache License 2.0](LICENSE). The eBPF kernel program is dual-licensed [GPL-2.0](LICENSE-GPL2) OR Apache-2.0, so it can declare a GPL-compatible license to the kernel's BPF verifier.
+The userspace runtime, CLI, and GUI are licensed under the [Apache License 2.0](LICENSE). The eBPF kernel program is dual-licensed [GPL-2.0](LICENSE-GPL2) OR Apache-2.0, so it can declare a GPL-compatible license to the kernel's BPF verifier.
 
 ## Contact
 
