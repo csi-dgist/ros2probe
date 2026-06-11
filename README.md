@@ -61,11 +61,15 @@ ros2 run demo_nodes_cpp talker
 ros2 run demo_nodes_cpp listener
 ```
 
-Then observe the traffic with ros2probe on either host:
+Then observe the traffic with ros2probe on either host. First start the runtime in its own terminal and leave it running:
 
 ```sh
-rp run                                 # start the runtime (separate terminal)
+rp run
+```
 
+In a second terminal, talk to that runtime:
+
+```sh
 rp topic list                          # what's on the wire
 rp topic hz /chatter                   # live publish rate
 rp bag record /chatter -o session.mcap # record to MCAP
