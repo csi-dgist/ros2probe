@@ -39,7 +39,13 @@ curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/insta
 curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/install.sh | sh -s -- --gui
 ```
 
-Prebuilt binaries are provided for **x86-64** and **aarch64** (Raspberry Pi 4/5, Jetson); the GUI build is x86-64 only. Uninstall with `sudo rm /usr/local/bin/rp`.
+Prebuilt binaries are provided for **x86-64** and **aarch64** (Raspberry Pi 4/5, Jetson); the GUI build is x86-64 only.
+
+**Uninstall**
+
+```sh
+sudo rm /usr/local/bin/rp
+```
 
 **Requirements**
 
