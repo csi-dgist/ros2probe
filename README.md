@@ -101,31 +101,6 @@ Run `rp <command> --help` for the full set of flags and options.
 - **Topic Monitor** — per-topic hz / bw / delay panels with history charts and statistics, plus an echo view of the last 100 decoded messages.
 - **Bag Recorder** — multi-topic selection, compression and output options, and live recording status (elapsed time, file size, per-topic message counts) with pause/resume.
 
-## Project Layout
-
-```
-ros2probe/
-├── ebpf/                 # eBPF kernel program (no_std)
-│   ├── src/filter.rs     # Socket filter entry point
-│   ├── src/rtps.rs       # RTPS header parsing in kernel
-│   └── src/maps.rs       # Shared maps
-├── common/               # Shared kernel↔userspace types (no_std)
-│   ├── src/ebpf.rs       # Map key/value types
-│   ├── src/rtps.rs       # RTPS structs
-│   └── src/event.rs      # Event definitions
-└── ros2probe/            # Userspace runtime + CLI + GUI
-    └── src/
-        ├── bin/          # rp (CLI + runtime + GUI entry points)
-        ├── capture/      # Packet reassembly (IPv4/IPv6 fragments)
-        ├── cli/          # rp subcommands
-        ├── command/      # Unix socket server and protocol
-        ├── discovery/    # RTPS/SPDP/SEDP + ros_discovery_info parsing
-        ├── gui/          # egui/eframe pages
-        ├── protocols/    # DDS/CDR deserialization
-        ├── recorder/     # MCAP writer
-        └── runtime/      # Main event loop, observers
-```
-
 ## Citation
 
 ros2probe is described in our paper, available on arXiv: <https://arxiv.org/abs/2606.10746>
