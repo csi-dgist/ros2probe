@@ -294,6 +294,28 @@ ros2probe/
 
 ---
 
+## Paper
+
+ros2probe is described in our paper:
+
+> **ros2probe: Non-intrusive, Kernel-selective Observability for Robot Operating System 2 Middleware**
+> Jisang Yu, Sanghoon Lee, Yeonwoo Choi, Kyung-Joon Park. 2026.
+> arXiv:2606.10746 — <https://arxiv.org/abs/2606.10746>
+
+```bibtex
+@misc{yu2026ros2probe,
+  title         = {ros2probe: Non-intrusive, Kernel-selective Observability for Robot Operating System 2 Middleware},
+  author        = {Jisang Yu and Sanghoon Lee and Yeonwoo Choi and Kyung-Joon Park},
+  year          = {2026},
+  eprint        = {2606.10746},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  url           = {https://arxiv.org/abs/2606.10746}
+}
+```
+
+---
+
 ## Contact
 
 ros2probe is developed at the **DGIST CSI Lab**. For questions about the design,
