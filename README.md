@@ -58,7 +58,13 @@ sudo rm /usr/local/bin/rp
 
 ## Quick Start
 
-Run a publisher and subscriber on two hosts (or the same host):
+Start the runtime **first**, in its own terminal, and leave it running:
+
+```sh
+rp run
+```
+
+Then launch your ROS 2 nodes — a publisher and subscriber on two hosts (or the same host):
 
 ```sh
 # Host A
@@ -67,11 +73,7 @@ ros2 run demo_nodes_cpp talker
 ros2 run demo_nodes_cpp listener
 ```
 
-Then observe the traffic with ros2probe on either host. First start the runtime in its own terminal and leave it running:
-
-```sh
-rp run
-```
+> **Order matters:** `rp run` must be observing *before* the nodes announce themselves so it can capture their discovery traffic. If you started `rp run` *after* some nodes were already up, run `rp discover` to force a `ros_discovery_info` re-broadcast and pick up the existing graph.
 
 In a second terminal, talk to that runtime:
 
