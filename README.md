@@ -1,6 +1,6 @@
 # ros2probe
 
-[![Release](https://img.shields.io/github/v/release/csi-dgist/ros2probe)](https://github.com/csi-dgist/ros2probe/releases/latest)
+[![Release](https://img.shields.io/badge/release-v0.1.1-blue)](https://github.com/csi-dgist/ros2probe/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![arXiv](https://img.shields.io/badge/arXiv-2606.10746-b31b1b.svg)](https://arxiv.org/abs/2606.10746)
 
@@ -27,11 +27,15 @@ ros2probe attaches an eBPF socket filter to every non-loopback network interface
 
 No Rust, no compiler, no build dependencies — just download and run. The script detects your architecture and installs `rp` to `/usr/local/bin`.
 
-```sh
-# CLI only (default)
-curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/install.sh | sh
+**CLI only** (default)
 
-# CLI + GUI  (x86-64 only)
+```sh
+curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/install.sh | sh
+```
+
+**CLI + GUI** (x86-64 only)
+
+```sh
 curl -fsSL https://github.com/csi-dgist/ros2probe/releases/latest/download/install.sh | sh -s -- --gui
 ```
 
@@ -96,20 +100,6 @@ Run `rp <command> --help` for the full set of flags and options.
 - **Dashboard** — live node/topic counts, system metrics (CPU, memory, network I/O) with history charts, and an interactive ROS graph. Filters for tf, parameter, debug, leaf, and SHM-only topics are on by default.
 - **Topic Monitor** — per-topic hz / bw / delay panels with history charts and statistics, plus an echo view of the last 100 decoded messages.
 - **Bag Recorder** — multi-topic selection, compression and output options, and live recording status (elapsed time, file size, per-topic message counts) with pause/resume.
-
-## Topic Classification
-
-ros2probe classifies every topic as **recordable** or **internal**. A topic is recordable only if it passes all of these filters:
-
-| Category | Criteria |
-|---|---|
-| tf topics | Name starts with `/tf` |
-| Parameter topics | Name contains `/parameter_events` or `/rosout` |
-| Debug topics | Name contains `/_` (hidden/debug convention) |
-| Leaf topics | No active subscribers |
-| SHM-only topics | No publisher or subscriber participant seen from a remote IP via SPDP |
-
-Internal topics stay visible in the GUI (under a collapsible section) so their info and graph connections can still be inspected.
 
 ## Project Layout
 
