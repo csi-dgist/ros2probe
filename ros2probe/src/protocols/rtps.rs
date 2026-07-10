@@ -411,9 +411,11 @@ fn inline_qos_has_disposal(submessage: &[u8], mut offset: usize, flags: u8) -> b
         }
         if pid == PID_STATUS_INFO && length >= 4 && offset + 4 <= submessage.len() {
             let status_info = read_u32(submessage, offset, flags);
-            return (status_info & STATUS_INFO_DISPOSED_OR_UNREGISTERED) != 0;
+            if (status_info & STATUS_INFO_DISPOSED_OR_UNREGISTERED) != 0 {
+                return true;
+            }
         }
-        offset = match offset.checked_add(length) {
+        offset = match skip_parameter_value(submessage, offset, length) {
             Some(next) => next,
             None => break,
         };
@@ -445,10 +447,17 @@ fn skip_parameter_list(payload: &[u8], mut offset: usize, flags: u8) -> Result<u
         if pid == PID_SENTINEL {
             return Ok(offset);
         }
-        offset = offset
-            .checked_add(length)
-            .ok_or_else(|| anyhow::anyhow!("inline QoS parameter length overflow"))?;
+        offset = skip_parameter_value(payload, offset, length)
+            .ok_or_else(|| anyhow::anyhow!("inline QoS parameter value out of bounds"))?;
     }
+}
+
+fn skip_parameter_value(payload: &[u8], offset: usize, length: usize) -> Option<usize> {
+    offset
+        .checked_add(length)?
+        .checked_add(3)
+        .map(|next| next & !3)
+        .filter(|next| *next <= payload.len())
 }
 
 fn insert_range(ranges: &mut Vec<(usize, usize)>, start: usize, end: usize) {
@@ -524,5 +533,52 @@ fn classify_writer(writer_entity_id: [u8; 4]) -> RtpsMessageKind {
             RtpsMessageKind::Discovery(DiscoveryKind::UnknownBuiltin)
         }
         _ => RtpsMessageKind::UserData,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LITTLE_ENDIAN: u8 = 0x01;
+
+    #[test]
+    fn inline_qos_skip_accounts_for_parameter_padding() {
+        let mut submessage = vec![0u8; RTPS_SUBMESSAGE_PREFIX_LEN];
+        submessage[1] = LITTLE_ENDIAN | RTPS_DATA_FLAG_INLINE_QOS;
+
+        // octetsToInlineQos = 0, so inline QoS starts immediately after the
+        // DATA submessage prefix used by this parser.
+        submessage[6..8].copy_from_slice(&0u16.to_le_bytes());
+
+        submessage.extend_from_slice(&0x0050u16.to_le_bytes());
+        submessage.extend_from_slice(&3u16.to_le_bytes());
+        submessage.extend_from_slice(&[0xaa, 0xbb, 0xcc]);
+        submessage.push(0x00);
+        submessage.extend_from_slice(&PID_SENTINEL.to_le_bytes());
+        submessage.extend_from_slice(&0u16.to_le_bytes());
+        submessage.extend_from_slice(&[0x00, 0x01, 0x02, 0x03]);
+
+        assert_eq!(data_payload_start(&submessage, submessage[1]).unwrap(), 20);
+    }
+
+    #[test]
+    fn inline_qos_disposal_scan_accounts_for_parameter_padding() {
+        let mut submessage = vec![0u8; RTPS_SUBMESSAGE_PREFIX_LEN];
+        submessage.extend_from_slice(&0x0050u16.to_le_bytes());
+        submessage.extend_from_slice(&3u16.to_le_bytes());
+        submessage.extend_from_slice(&[0xaa, 0xbb, 0xcc]);
+        submessage.push(0x00);
+        submessage.extend_from_slice(&PID_STATUS_INFO.to_le_bytes());
+        submessage.extend_from_slice(&4u16.to_le_bytes());
+        submessage.extend_from_slice(&1u32.to_le_bytes());
+        submessage.extend_from_slice(&PID_SENTINEL.to_le_bytes());
+        submessage.extend_from_slice(&0u16.to_le_bytes());
+
+        assert!(inline_qos_has_disposal(
+            &submessage,
+            RTPS_SUBMESSAGE_PREFIX_LEN,
+            LITTLE_ENDIAN
+        ));
     }
 }

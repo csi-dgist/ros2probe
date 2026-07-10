@@ -4,9 +4,9 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0_%7C_GPL--2.0-blue.svg)](LICENSE)
 [![arXiv](https://img.shields.io/badge/arXiv-2606.10746-b31b1b.svg)](https://arxiv.org/abs/2606.10746)
 
-Host-level observability for ROS 2 DDS traffic — without creating ROS 2 subscriptions.
+Host-level observability for ROS 2 DDS traffic.
 
-ros2probe attaches an eBPF socket filter to every non-loopback network interface, captures RTPS/DDS packets in the kernel, and reconstructs the full ROS graph, topic metrics, and message streams entirely in userspace. A CLI (`rp`) and a desktop GUI (`rp gui`) talk to the runtime over a Unix socket. DDS middleware only; Zenoh support is planned.
+ros2probe attaches eBPF socket filters to loopback and external network interfaces, captures RTPS/DDS packets in the kernel, and reconstructs the full ROS graph, topic metrics, and message streams entirely in userspace. A CLI (`rp`) and a desktop GUI (`rp gui`) talk to the runtime over a Unix socket. DDS middleware only; Zenoh support is planned.
 
 **Project page:** https://csi-dgist.github.io/ros2probe-page/
 
@@ -16,9 +16,9 @@ ros2probe attaches an eBPF socket filter to every non-loopback network interface
 
 ## Features
 
-- **Zero ROS subscriptions** — traffic is observed passively at the socket level; ros2probe never joins the DDS graph
+- **Passive capture by default** — traffic is observed at the socket level; for SHM traffic, ros2probe uses a temporary shadow subscriber to make the middleware emit UDP loopback traffic
 - **Full graph reconstruction** — participants, endpoints, node names, and publisher/subscriber relationships derived from SPDP/SEDP + `ros_discovery_info`
-- **SHM vs network distinction** — topics communicated exclusively over shared memory (FastDDS/CycloneDDS SHM locators) are identified and excluded from recording
+- **Single-host capture** — loopback and external interfaces are captured, so local and multi-host deployments use the same packet pipeline
 - **Live topic metrics** — publish rate (hz), bandwidth (bw), end-to-end delay, and message echo with sliding-window statistics
 - **MCAP recording** — bag files with optional zstd/lz4 compression, pause/resume, and topic selection
 - **CLI + GUI** — the same data exposed through both interfaces
@@ -103,7 +103,7 @@ Run `rp <command> --help` for the full set of flags and options.
 | `rp action list` / `info` | Action introspection |
 | `rp discover` | Force a `ros_discovery_info` broadcast to refresh a stale graph |
 
-> **Internal topics** (tf, `parameter_events`, `rosout`, debug, and SHM-only topics) produce no output for `hz` / `bw` / `delay` / `echo`, and are never captured by `rp bag` — even with `--all`.
+> **Internal topics** (tf, `parameter_events`, `rosout`, and debug topics) produce no output for `hz` / `bw` / `delay` / `echo`, and are never captured by `rp bag` — even with `--all`. For SHM traffic, ros2probe may create a temporary shadow subscriber so the DDS middleware emits UDP traffic on loopback.
 
 ## GUI
 
@@ -118,14 +118,11 @@ Run `rp <command> --help` for the full set of flags and options.
 If you use ros2probe in your research, please cite it:
 
 ```bibtex
-@misc{yu2026ros2probe,
-  title         = {ros2probe: Non-intrusive, Kernel-selective Observability for Robot Operating System 2 Middleware},
-  author        = {Jisang Yu and Sanghoon Lee and Yeonwoo Choi and Kyung-Joon Park},
-  year          = {2026},
-  eprint        = {2606.10746},
-  archivePrefix = {arXiv},
-  primaryClass  = {cs.RO},
-  url           = {https://arxiv.org/abs/2606.10746}
+@article{yu2026ros2probe,
+  title={ros2probe: Non-intrusive, Kernel-selective Observability for Robot Operating System 2 Middleware},
+  author={Yu, Jisang and Lee, Sanghoon and Choi, Yeonwoo and Park, Kyung-Joon},
+  journal={arXiv preprint arXiv:2606.10746},
+  year={2026}
 }
 ```
 

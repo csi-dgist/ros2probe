@@ -1,6 +1,6 @@
 [package]
 name = "ros2probe-ebpf"
-version = "0.1.1"
+version = "0.1.0"
 edition.workspace = true
 # Dual-licensed so the program can declare GPL to the kernel BPF verifier (and
 # thus use GPL-only helpers) while remaining usable under Apache-2.0 like the
