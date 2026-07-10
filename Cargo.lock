@@ -3652,7 +3652,7 @@ dependencies = [
 
 [[package]]
 name = "ros2probe"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3683,14 +3683,14 @@ dependencies = [
 
 [[package]]
 name = "ros2probe-common"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "aya",
 ]
 
 [[package]]
 name = "ros2probe-ebpf"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "aya-ebpf",
  "aya-log-ebpf",
