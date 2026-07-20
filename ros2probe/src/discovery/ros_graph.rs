@@ -10,6 +10,9 @@ const ROS_DISCOVERY_INFO_TYPE: &str = "rmw_dds_common/msg/ParticipantEntitiesInf
 const ROS_GID_LEN: usize = 16;
 const ROS_GID_LEN_LEGACY: usize = 24;
 const NODE_ENTITY_MIN_SERIALIZED_LEN: usize = 16;
+const MAX_ROS_DISCOVERY_NODES: usize = 4096;
+const MAX_ROS_DISCOVERY_GIDS_PER_NODE: usize = 16384;
+const MAX_ROS_DISCOVERY_STRING_LEN: usize = 64 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct ParticipantEntitiesInfo {
@@ -40,9 +43,7 @@ pub fn parse_participant_entities_info(payload: &[u8]) -> anyhow::Result<Partici
     parse_participant_entities_info_body(&payload[4..], little_endian, ROS_GID_LEN).or_else(|err| {
         parse_participant_entities_info_body(&payload[4..], little_endian, ROS_GID_LEN_LEGACY)
             .with_context(|| {
-                format!(
-                    "parse ros_discovery_info with {ROS_GID_LEN}-byte GID failed: {err:#}"
-                )
+                format!("parse ros_discovery_info with {ROS_GID_LEN}-byte GID failed: {err:#}")
             })
     })
 }
@@ -54,7 +55,11 @@ fn parse_participant_entities_info_body(
 ) -> anyhow::Result<ParticipantEntitiesInfo> {
     let mut reader = CdrReader::new(payload, little_endian, gid_len);
     let participant_gid = reader.read_topic_gid()?;
-    let node_count = reader.read_sequence_len("node entity sequence", NODE_ENTITY_MIN_SERIALIZED_LEN)?;
+    let node_count = reader.read_bounded_len(
+        "node entity sequence",
+        MAX_ROS_DISCOVERY_NODES,
+        NODE_ENTITY_MIN_SERIALIZED_LEN,
+    )?;
     let mut nodes = Vec::with_capacity(node_count);
     for _ in 0..node_count {
         let node_namespace = reader.read_string()?;
@@ -62,11 +67,14 @@ fn parse_participant_entities_info_body(
         let reader_gids = reader.read_gid_sequence()?;
         let writer_gids = reader.read_gid_sequence()?;
         nodes.push(NodeSample {
-            participant_gid,
+            participant_gid: Some(participant_gid),
+            participant_id: None,
             node_namespace,
             node_name,
             writer_gids,
             reader_gids,
+            writer_endpoint_ids: Vec::new(),
+            reader_endpoint_ids: Vec::new(),
         });
     }
     reader.finish()?;
@@ -96,10 +104,7 @@ impl<'a> CdrReader<'a> {
 
     fn read_u32(&mut self) -> anyhow::Result<u32> {
         self.align(4)?;
-        let end = self
-            .offset
-            .checked_add(4)
-            .context("u32 offset overflow")?;
+        let end = self.offset.checked_add(4).context("u32 offset overflow")?;
         let bytes = self
             .bytes
             .get(self.offset..end)
@@ -115,6 +120,9 @@ impl<'a> CdrReader<'a> {
     fn read_string(&mut self) -> anyhow::Result<String> {
         self.align(4)?;
         let len = self.read_u32()? as usize;
+        if len > MAX_ROS_DISCOVERY_STRING_LEN {
+            bail!("CDR string length {len} exceeds maximum {MAX_ROS_DISCOVERY_STRING_LEN}");
+        }
         if len == 0 {
             return Ok(String::new());
         }
@@ -137,7 +145,11 @@ impl<'a> CdrReader<'a> {
     }
 
     fn read_gid_sequence(&mut self) -> anyhow::Result<Vec<TopicGid>> {
-        let len = self.read_sequence_len("GID sequence", self.gid_len)?;
+        let len = self.read_bounded_len(
+            "GID sequence",
+            MAX_ROS_DISCOVERY_GIDS_PER_NODE,
+            self.gid_len,
+        )?;
         let mut gids = Vec::with_capacity(len);
         for _ in 0..len {
             gids.push(self.read_topic_gid()?);
@@ -161,19 +173,21 @@ impl<'a> CdrReader<'a> {
         Ok(TopicGid::new(gid))
     }
 
-    fn read_sequence_len(
+    fn read_bounded_len(
         &mut self,
         what: &str,
+        hard_limit: usize,
         min_serialized_item_len: usize,
     ) -> anyhow::Result<usize> {
         let len = self.read_u32()? as usize;
+        if len > hard_limit {
+            bail!("{what} length {len} exceeds maximum {hard_limit}");
+        }
         if min_serialized_item_len > 0 {
             let max_from_payload =
                 self.bytes.len().saturating_sub(self.offset) / min_serialized_item_len;
             if len > max_from_payload {
-                bail!(
-                    "{what} length {len} exceeds remaining payload capacity {max_from_payload}"
-                );
+                bail!("{what} length {len} exceeds remaining payload capacity {max_from_payload}");
             }
         }
         Ok(len)
@@ -262,5 +276,29 @@ mod tests {
         assert_eq!(info.nodes[0].node_name, "talker");
         assert_eq!(info.nodes[0].reader_gids.len(), 1);
         assert_eq!(info.nodes[0].writer_gids.len(), 1);
+    }
+
+    #[test]
+    fn rejects_unbounded_node_count_without_allocating() {
+        let mut payload = vec![0x00, 0x01, 0x00, 0x00];
+        push_gid(&mut payload, 0x10, ROS_GID_LEN);
+        payload.extend(u32::MAX.to_le_bytes());
+
+        let err = parse_participant_entities_info(&payload).unwrap_err();
+        assert!(err.to_string().contains("node entity sequence length"));
+    }
+
+    #[test]
+    fn rejects_unbounded_gid_sequence_without_allocating() {
+        let mut payload = vec![0x00, 0x01, 0x00, 0x00];
+        push_gid(&mut payload, 0x10, ROS_GID_LEN);
+        payload.extend(1u32.to_le_bytes()); // one node
+        push_cdr_string(&mut payload, "");
+        push_cdr_string(&mut payload, "");
+        payload.extend(u32::MAX.to_le_bytes()); // impossible reader_gid_seq
+        payload.extend(0u32.to_le_bytes()); // enough remaining bytes to pass node-count check
+
+        let err = parse_participant_entities_info(&payload).unwrap_err();
+        assert!(err.to_string().contains("GID sequence length"));
     }
 }

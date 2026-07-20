@@ -24,6 +24,7 @@ pub fn build_response(request: TopicGraphRequest, state: CommandState) -> TopicG
     TopicGraphResponse {
         topics,
         nodes: state.node_details,
+        middleware: state.middleware,
         total_topics_count,
         total_nodes_count,
         total_actions_count,

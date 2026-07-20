@@ -1,24 +1,20 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
+use ros2probe::capture::ZenohCapturePorts;
 use ros2probe::cli::action::info::ActionInfoCommand;
 use ros2probe::cli::action::list::ActionListCommand;
 use ros2probe::cli::bag::record::BagRecordCommand;
+use ros2probe::cli::discover::DiscoverCommand;
 use ros2probe::cli::node::info::NodeInfoCommand;
 use ros2probe::cli::node::list::NodeListCommand;
 use ros2probe::cli::service::find::ServiceFindCommand;
 use ros2probe::cli::service::list::ServiceListCommand;
 use ros2probe::cli::service::r#type::ServiceTypeCommand;
-use ros2probe::cli::discover::DiscoverCommand;
 use ros2probe::cli::topic::{
-    bw::TopicBwCommand,
-    delay::TopicDelayCommand,
-    echo::TopicEchoCommand,
-    find::TopicFindCommand,
-    hz::TopicHzCommand,
-    info::TopicInfoCommand,
-    list::TopicListCommand,
-    r#type::TopicTypeCommand,
+    bw::TopicBwCommand, delay::TopicDelayCommand, echo::TopicEchoCommand, find::TopicFindCommand,
+    hz::TopicHzCommand, info::TopicInfoCommand, list::TopicListCommand, r#type::TopicTypeCommand,
 };
+use ros2probe_common::ZENOH_TRANSPORT_PORT;
 
 #[derive(Debug, Parser)]
 #[command(name = "rp")]
@@ -40,13 +36,13 @@ enum Command {
         #[command(subcommand)]
         command: BagSubcommand,
     },
-    /// Trigger spy discovery (forces /ros_discovery_info over UDP)
+    /// Refresh the observed ROS graph using RTPS and/or Zenoh discovery
     Discover(DiscoverCommand),
     /// Launch the GUI
     #[cfg(feature = "gui")]
     Gui,
     /// Start the ros2probe runtime daemon
-    Run,
+    Run(RunCommand),
     /// Node introspection commands
     Node {
         #[command(subcommand)]
@@ -62,6 +58,35 @@ enum Command {
         #[command(subcommand)]
         command: ServiceSubcommand,
     },
+}
+
+#[derive(Debug, Args)]
+struct RunCommand {
+    /// Zenoh transport port(s) to capture for both TCP and UDP. Replaces the default 7447 when set.
+    #[arg(long = "zenoh-transport-port", value_name = "PORT")]
+    zenoh_transport_ports: Vec<u16>,
+}
+
+impl RunCommand {
+    fn runtime_config(&self) -> ros2probe::runtime::RuntimeConfig {
+        let transport_ports = if self.zenoh_transport_ports.is_empty() {
+            vec![ZENOH_TRANSPORT_PORT]
+        } else {
+            self.zenoh_transport_ports.clone()
+        };
+        ros2probe::runtime::RuntimeConfig {
+            zenoh_ports: ZenohCapturePorts::from_transport_ports(transport_ports),
+        }
+    }
+
+    fn sudo_args(&self) -> Vec<String> {
+        let mut args = vec![String::from("run")];
+        for port in &self.zenoh_transport_ports {
+            args.push(String::from("--zenoh-transport-port"));
+            args.push(port.to_string());
+        }
+        args
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -136,14 +161,14 @@ fn main() -> anyhow::Result<()> {
             command: ActionSubcommand::Info(args),
         } => ros2probe::cli::action::info::run(args),
         Command::Discover(args) => ros2probe::cli::discover::run(args),
-        Command::Run => {
+        Command::Run(args) => {
             // SAFETY: getuid() is always safe to call.
             if unsafe { libc::getuid() } != 0 {
                 let exe = std::env::current_exe()?;
                 let status = std::process::Command::new("sudo")
                     .arg("-E")
                     .arg(&exe)
-                    .arg("run")
+                    .args(args.sudo_args())
                     .status()?;
                 return if status.success() {
                     Ok(())
@@ -152,13 +177,12 @@ fn main() -> anyhow::Result<()> {
                 };
             }
             env_logger::init();
+            let config = args.runtime_config();
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()?;
             println!("ros2probe started");
-            let result = rt.block_on(ros2probe::runtime::run(
-                ros2probe::runtime::RuntimeConfig::default(),
-            ));
+            let result = rt.block_on(ros2probe::runtime::run(config));
             match result {
                 Ok(()) => {
                     println!("\nros2probe stopped");

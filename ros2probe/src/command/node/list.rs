@@ -1,5 +1,5 @@
 use crate::command::{
-    protocol::{NodeListResponse, NodeListRequest},
+    protocol::{NodeListRequest, NodeListResponse},
     state::CommandState,
 };
 

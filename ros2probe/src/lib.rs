@@ -1,6 +1,6 @@
-pub mod client;
 pub mod capture;
 pub mod cli;
+pub mod client;
 pub mod command;
 pub mod discovery;
 #[cfg(feature = "gui")]

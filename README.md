@@ -1,12 +1,12 @@
 # ros2probe
 
-[![Release](https://img.shields.io/badge/release-v0.1.1-blue)](https://github.com/csi-dgist/ros2probe/releases/latest)
+[![Release](https://img.shields.io/badge/release-v0.1.2-blue)](https://github.com/csi-dgist/ros2probe/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0_%7C_GPL--2.0-blue.svg)](LICENSE)
 [![arXiv](https://img.shields.io/badge/arXiv-2606.10746-b31b1b.svg)](https://arxiv.org/abs/2606.10746)
 
-Host-level observability for ROS 2 DDS traffic.
+Host-level observability for ROS 2 DDS and Zenoh traffic.
 
-ros2probe attaches eBPF socket filters to loopback and external network interfaces, captures RTPS/DDS packets in the kernel, and reconstructs the full ROS graph, topic metrics, and message streams entirely in userspace. A CLI (`rp`) and a desktop GUI (`rp gui`) talk to the runtime over a Unix socket. DDS middleware only; Zenoh support is planned.
+ros2probe attaches eBPF socket filters to loopback and external network interfaces, captures RTPS/DDS and Zenoh packets in the kernel, and reconstructs the ROS graph, topic metrics, and message streams in userspace. A CLI (`rp`) and a desktop GUI (`rp gui`) talk to the runtime over a Unix socket.
 
 **Project page:** https://csi-dgist.github.io/ros2probe-page/
 
@@ -73,7 +73,7 @@ ros2 run demo_nodes_cpp talker
 ros2 run demo_nodes_cpp listener
 ```
 
-> **Order matters:** `rp run` must be observing *before* the nodes announce themselves so it can capture their discovery traffic. If you started `rp run` *after* some nodes were already up, run `rp discover` to force a `ros_discovery_info` re-broadcast and pick up the existing graph.
+> **Order matters:** `rp run` must be observing *before* the nodes announce themselves so it can capture their discovery traffic. If you started `rp run` *after* some nodes were already up, run `rp discover` to refresh RTPS discovery and query existing Zenoh liveliness tokens over the observed local TCP or UDP transport.
 
 In a second terminal, talk to that runtime:
 
@@ -101,9 +101,9 @@ Run `rp <command> --help` for the full set of flags and options.
 | `rp node list` / `info` | Discovered nodes and their endpoints |
 | `rp service list` / `type` / `find` | Service introspection |
 | `rp action list` / `info` | Action introspection |
-| `rp discover` | Force a `ros_discovery_info` broadcast to refresh a stale graph |
+| `rp discover` | Refresh a stale graph using RTPS discovery and local Zenoh TCP/UDP liveliness queries |
 
-> **Internal topics** (tf, `parameter_events`, `rosout`, and debug topics) produce no output for `hz` / `bw` / `delay` / `echo`, and are never captured by `rp bag` — even with `--all`. For SHM traffic, ros2probe may create a temporary shadow subscriber so the DDS middleware emits UDP traffic on loopback.
+> **Internal topics** (tf, `parameter_events`, `rosout`, and debug topics) produce no output for `hz` / `bw` / `delay` / `echo`, and are never captured by `rp bag` — even with `--all`. For SHM traffic, ros2probe may create a temporary shadow subscriber over the active DDS or Zenoh transport so payloads remain observable.
 
 ## GUI
 

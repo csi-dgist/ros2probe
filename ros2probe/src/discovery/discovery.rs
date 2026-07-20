@@ -6,15 +6,18 @@ use std::{
 use ros2probe_common::TopicGid;
 
 use crate::discovery::{
-    DiscoveredEndpoint, DiscoveredParticipant, DiscoverySample, DurationValue, DurabilityQos,
-    LivelinessQos, Locator, ReliabilityQos,
+    DiscoveredEndpoint, DiscoveredParticipant, DiscoverySample, DurabilityQos, DurationValue,
+    EndpointId, HistoryQos, LivelinessQos, Locator, ParticipantId, ReliabilityQos,
 };
 
 #[derive(Debug)]
 pub struct DiscoveryTable {
-    participants: BTreeMap<TopicGid, ParticipantEntry>,
-    publications: BTreeMap<TopicGid, EndpointEntry>,
-    subscriptions: BTreeMap<TopicGid, EndpointEntry>,
+    participants: BTreeMap<ParticipantId, ParticipantEntry>,
+    publications: BTreeMap<EndpointId, EndpointEntry>,
+    subscriptions: BTreeMap<EndpointId, EndpointEntry>,
+    participant_gid_index: BTreeMap<TopicGid, ParticipantId>,
+    publication_gid_index: BTreeMap<TopicGid, EndpointId>,
+    subscription_gid_index: BTreeMap<TopicGid, EndpointId>,
     default_endpoint_ttl: Duration,
 }
 
@@ -24,11 +27,15 @@ pub struct NodeTable {
     writer_index: BTreeMap<TopicGid, NodeKey>,
     reader_index: BTreeMap<TopicGid, NodeKey>,
     participant_index: BTreeMap<TopicGid, BTreeSet<NodeKey>>,
+    writer_id_index: BTreeMap<EndpointId, NodeKey>,
+    reader_id_index: BTreeMap<EndpointId, NodeKey>,
+    participant_id_index: BTreeMap<ParticipantId, BTreeSet<NodeKey>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct ParticipantEntry {
-    pub gid: TopicGid,
+    pub id: ParticipantId,
+    pub gid: Option<TopicGid>,
     pub lease_duration: Option<DurationValue>,
     pub default_unicast_locators: Vec<Locator>,
     pub metatraffic_unicast_locators: Vec<Locator>,
@@ -40,16 +47,21 @@ pub struct ParticipantEntry {
 
 #[derive(Clone, Debug)]
 pub struct EndpointEntry {
-    pub endpoint_gid: TopicGid,
+    pub endpoint_id: EndpointId,
+    pub endpoint_gid: Option<TopicGid>,
     pub participant_gid: Option<TopicGid>,
+    pub participant_id: Option<ParticipantId>,
     pub topic_name: Option<String>,
     pub type_name: Option<String>,
+    pub type_hash: Option<String>,
+    pub history: Option<HistoryQos>,
     pub reliability: Option<ReliabilityQos>,
     pub durability: Option<DurabilityQos>,
     pub deadline: Option<DurationValue>,
     pub latency_budget: Option<DurationValue>,
     pub lifespan: Option<DurationValue>,
     pub liveliness: Option<LivelinessQos>,
+    pub liveliness_lease_duration: Option<DurationValue>,
     pub unicast_locators: Vec<Locator>,
     pub multicast_locators: Vec<Locator>,
     pub first_seen_at: SystemTime,
@@ -57,13 +69,16 @@ pub struct EndpointEntry {
     pub expires_at: Option<SystemTime>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DiscoveryChange {
     Inserted,
     Updated,
     Noop,
-    /// A participant was gracefully disposed; its GID is carried for NodeTable cleanup.
-    RemovedParticipant(TopicGid),
+    /// A participant was gracefully disposed; its identity is carried for NodeTable cleanup.
+    RemovedParticipant {
+        id: ParticipantId,
+        rtps_gid: Option<TopicGid>,
+    },
     /// An individual endpoint was gracefully disposed.
     RemovedEndpoint,
 }
@@ -76,6 +91,8 @@ pub struct TopicView {
     pub subscription_count: usize,
     pub publisher_gids: Vec<TopicGid>,
     pub subscription_gids: Vec<TopicGid>,
+    pub publisher_ids: Vec<EndpointId>,
+    pub subscription_ids: Vec<EndpointId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -83,12 +100,14 @@ pub struct ExpireStats {
     pub participants_removed: usize,
     pub publications_removed: usize,
     pub subscriptions_removed: usize,
+    pub removed_participant_ids: Vec<ParticipantId>,
     pub removed_participant_gids: Vec<TopicGid>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct NodeKey {
-    pub participant_gid: TopicGid,
+    pub participant_id: ParticipantId,
+    pub participant_gid: Option<TopicGid>,
     pub node_namespace: String,
     pub node_name: String,
 }
@@ -98,17 +117,23 @@ pub struct NodeEntry {
     pub key: NodeKey,
     pub writer_gids: BTreeSet<TopicGid>,
     pub reader_gids: BTreeSet<TopicGid>,
+    pub writer_endpoint_ids: BTreeSet<EndpointId>,
+    pub reader_endpoint_ids: BTreeSet<EndpointId>,
+    pub participant_id: ParticipantId,
     pub first_seen_at: SystemTime,
     pub last_seen_at: SystemTime,
 }
 
 #[derive(Clone, Debug)]
 pub struct NodeSample {
-    pub participant_gid: TopicGid,
+    pub participant_gid: Option<TopicGid>,
+    pub participant_id: Option<ParticipantId>,
     pub node_namespace: String,
     pub node_name: String,
     pub writer_gids: Vec<TopicGid>,
     pub reader_gids: Vec<TopicGid>,
+    pub writer_endpoint_ids: Vec<EndpointId>,
+    pub reader_endpoint_ids: Vec<EndpointId>,
 }
 
 impl DiscoveryTable {
@@ -117,20 +142,43 @@ impl DiscoveryTable {
             participants: BTreeMap::new(),
             publications: BTreeMap::new(),
             subscriptions: BTreeMap::new(),
+            participant_gid_index: BTreeMap::new(),
+            publication_gid_index: BTreeMap::new(),
+            subscription_gid_index: BTreeMap::new(),
             default_endpoint_ttl,
         }
     }
 
-    pub fn apply_sample(&mut self, sample: DiscoverySample, observed_at: SystemTime) -> DiscoveryChange {
+    pub fn apply_sample(
+        &mut self,
+        sample: DiscoverySample,
+        observed_at: SystemTime,
+    ) -> DiscoveryChange {
         match sample {
-            DiscoverySample::Participant(participant) => self.upsert_participant(participant, observed_at),
+            DiscoverySample::Participant(participant) => {
+                self.upsert_participant(participant, observed_at)
+            }
             DiscoverySample::Publication(endpoint) => {
-                let expires_at = self.endpoint_expires_at(endpoint.participant_gid, observed_at);
-                Self::upsert_endpoint(&mut self.publications, endpoint, observed_at, expires_at)
+                let expires_at =
+                    self.endpoint_expires_at(endpoint.participant_id.as_ref(), observed_at);
+                Self::upsert_endpoint(
+                    &mut self.publications,
+                    &mut self.publication_gid_index,
+                    endpoint,
+                    observed_at,
+                    expires_at,
+                )
             }
             DiscoverySample::Subscription(endpoint) => {
-                let expires_at = self.endpoint_expires_at(endpoint.participant_gid, observed_at);
-                Self::upsert_endpoint(&mut self.subscriptions, endpoint, observed_at, expires_at)
+                let expires_at =
+                    self.endpoint_expires_at(endpoint.participant_id.as_ref(), observed_at);
+                Self::upsert_endpoint(
+                    &mut self.subscriptions,
+                    &mut self.subscription_gid_index,
+                    endpoint,
+                    observed_at,
+                    expires_at,
+                )
             }
             DiscoverySample::UnknownBuiltin(_) => DiscoveryChange::Noop,
             DiscoverySample::Disposed { kind, gid } => self.apply_disposal(kind, gid),
@@ -145,23 +193,43 @@ impl DiscoveryTable {
         use crate::discovery::DiscoveryBuiltinKind;
         match kind {
             DiscoveryBuiltinKind::Participant => {
-                if self.participants.remove(&gid).is_some() {
-                    self.publications.retain(|_, e| e.participant_gid != Some(gid));
-                    self.subscriptions.retain(|_, e| e.participant_gid != Some(gid));
-                    DiscoveryChange::RemovedParticipant(gid)
+                let Some(id) = self.participant_gid_index.remove(&gid) else {
+                    return DiscoveryChange::Noop;
+                };
+                if let Some(entry) = self.participants.remove(&id) {
+                    remove_participant_endpoints(
+                        &mut self.publications,
+                        &mut self.publication_gid_index,
+                        &id,
+                    );
+                    remove_participant_endpoints(
+                        &mut self.subscriptions,
+                        &mut self.subscription_gid_index,
+                        &id,
+                    );
+                    DiscoveryChange::RemovedParticipant {
+                        id,
+                        rtps_gid: entry.gid,
+                    }
                 } else {
                     DiscoveryChange::Noop
                 }
             }
             DiscoveryBuiltinKind::Publication => {
-                if self.publications.remove(&gid).is_some() {
+                let Some(id) = self.publication_gid_index.remove(&gid) else {
+                    return DiscoveryChange::Noop;
+                };
+                if self.publications.remove(&id).is_some() {
                     DiscoveryChange::RemovedEndpoint
                 } else {
                     DiscoveryChange::Noop
                 }
             }
             DiscoveryBuiltinKind::Subscription => {
-                if self.subscriptions.remove(&gid).is_some() {
+                let Some(id) = self.subscription_gid_index.remove(&gid) else {
+                    return DiscoveryChange::Noop;
+                };
+                if self.subscriptions.remove(&id).is_some() {
                     DiscoveryChange::RemovedEndpoint
                 } else {
                     DiscoveryChange::Noop
@@ -174,63 +242,127 @@ impl DiscoveryTable {
     pub fn expire_stale(&mut self, now: SystemTime) -> ExpireStats {
         let mut stats = ExpireStats::default();
 
-        let expired_participant_gids = self
+        let expired_participant_ids = self
             .participants
             .iter()
-            .filter_map(|(gid, entry)| is_expired(entry.expires_at, now).then_some(*gid))
+            .filter_map(|(id, entry)| is_expired(entry.expires_at, now).then_some(id.clone()))
             .collect::<Vec<_>>();
-        for gid in &expired_participant_gids {
-            self.participants.remove(gid);
+        for id in &expired_participant_ids {
+            if let Some(entry) = self.participants.remove(id) {
+                if let Some(gid) = entry.gid {
+                    self.participant_gid_index.remove(&gid);
+                    stats.removed_participant_gids.push(gid);
+                }
+            }
             stats.participants_removed += 1;
         }
-        stats.removed_participant_gids = expired_participant_gids;
+        stats.removed_participant_ids = expired_participant_ids;
 
-        stats.publications_removed += expire_endpoints(&mut self.publications, now);
-        stats.subscriptions_removed += expire_endpoints(&mut self.subscriptions, now);
+        stats.publications_removed +=
+            expire_endpoints(&mut self.publications, &mut self.publication_gid_index, now);
+        stats.subscriptions_removed += expire_endpoints(
+            &mut self.subscriptions,
+            &mut self.subscription_gid_index,
+            now,
+        );
 
         stats
     }
 
     pub fn participant(&self, gid: &TopicGid) -> Option<&ParticipantEntry> {
-        self.participants.get(gid)
+        self.participant_gid_index
+            .get(gid)
+            .and_then(|id| self.participants.get(id))
     }
 
     pub fn publication(&self, gid: &TopicGid) -> Option<&EndpointEntry> {
-        self.publications.get(gid)
+        self.publication_gid_index
+            .get(gid)
+            .and_then(|id| self.publications.get(id))
+    }
+
+    pub fn publication_by_id(&self, id: &EndpointId) -> Option<&EndpointEntry> {
+        self.publications.get(id)
     }
 
     pub fn subscription(&self, gid: &TopicGid) -> Option<&EndpointEntry> {
-        self.subscriptions.get(gid)
+        self.subscription_gid_index
+            .get(gid)
+            .and_then(|id| self.subscriptions.get(id))
     }
 
-    pub fn publications(&self) -> &BTreeMap<TopicGid, EndpointEntry> {
+    pub fn subscription_by_id(&self, id: &EndpointId) -> Option<&EndpointEntry> {
+        self.subscriptions.get(id)
+    }
+
+    pub fn participant_by_id(&self, id: &ParticipantId) -> Option<&ParticipantEntry> {
+        self.participants.get(id)
+    }
+
+    pub fn remove_participant_by_id(&mut self, id: &ParticipantId) -> Option<ParticipantEntry> {
+        let entry = self.participants.remove(id)?;
+        if let Some(gid) = entry.gid {
+            self.participant_gid_index.remove(&gid);
+        }
+        remove_participant_endpoints(&mut self.publications, &mut self.publication_gid_index, id);
+        remove_participant_endpoints(
+            &mut self.subscriptions,
+            &mut self.subscription_gid_index,
+            id,
+        );
+        Some(entry)
+    }
+
+    pub fn remove_publication_by_id(&mut self, id: &EndpointId) -> Option<EndpointEntry> {
+        let entry = self.publications.remove(id)?;
+        if let Some(gid) = entry.endpoint_gid {
+            self.publication_gid_index.remove(&gid);
+        }
+        Some(entry)
+    }
+
+    pub fn remove_subscription_by_id(&mut self, id: &EndpointId) -> Option<EndpointEntry> {
+        let entry = self.subscriptions.remove(id)?;
+        if let Some(gid) = entry.endpoint_gid {
+            self.subscription_gid_index.remove(&gid);
+        }
+        Some(entry)
+    }
+
+    pub fn publications(&self) -> &BTreeMap<EndpointId, EndpointEntry> {
         &self.publications
     }
 
-    pub fn subscriptions(&self) -> &BTreeMap<TopicGid, EndpointEntry> {
+    pub fn subscriptions(&self) -> &BTreeMap<EndpointId, EndpointEntry> {
         &self.subscriptions
     }
 
     pub fn topics(&self) -> Vec<TopicView> {
         let mut by_topic = BTreeMap::<String, TopicAccumulator>::new();
 
-        for (gid, publication) in &self.publications {
+        for (id, publication) in &self.publications {
             let Some(topic_name) = &publication.topic_name else {
                 continue;
             };
             let entry = by_topic.entry(topic_name.clone()).or_default();
-            entry.publisher_gids.push(*gid);
+            if let Some(gid) = publication.endpoint_gid {
+                entry.publisher_gids.push(gid);
+            }
+            entry.publisher_ids.push(id.clone());
             if let Some(type_name) = &publication.type_name {
                 entry.type_names.insert(type_name.clone());
             }
         }
 
-        for (gid, subscription) in &self.subscriptions {
+        for (id, subscription) in &self.subscriptions {
             let Some(topic_name) = &subscription.topic_name else {
                 continue;
             };
             let entry = by_topic.entry(topic_name.clone()).or_default();
-            entry.subscription_gids.push(*gid);
+            if let Some(gid) = subscription.endpoint_gid {
+                entry.subscription_gids.push(gid);
+            }
+            entry.subscription_ids.push(id.clone());
             if let Some(type_name) = &subscription.type_name {
                 entry.type_names.insert(type_name.clone());
             }
@@ -241,10 +373,12 @@ impl DiscoveryTable {
             .map(|(topic_name, acc)| TopicView {
                 topic_name,
                 type_names: acc.type_names.into_iter().collect(),
-                publisher_count: acc.publisher_gids.len(),
-                subscription_count: acc.subscription_gids.len(),
+                publisher_count: acc.publisher_ids.len(),
+                subscription_count: acc.subscription_ids.len(),
                 publisher_gids: acc.publisher_gids,
                 subscription_gids: acc.subscription_gids,
+                publisher_ids: acc.publisher_ids,
+                subscription_ids: acc.subscription_ids,
             })
             .collect()
     }
@@ -252,19 +386,25 @@ impl DiscoveryTable {
     pub fn topic(&self, topic_name: &str) -> Option<TopicView> {
         let mut acc = TopicAccumulator::default();
         let mut found = false;
-        for (gid, pub_) in &self.publications {
+        for (id, pub_) in &self.publications {
             if pub_.topic_name.as_deref() == Some(topic_name) {
                 found = true;
-                acc.publisher_gids.push(*gid);
+                if let Some(gid) = pub_.endpoint_gid {
+                    acc.publisher_gids.push(gid);
+                }
+                acc.publisher_ids.push(id.clone());
                 if let Some(t) = &pub_.type_name {
                     acc.type_names.insert(t.clone());
                 }
             }
         }
-        for (gid, sub) in &self.subscriptions {
+        for (id, sub) in &self.subscriptions {
             if sub.topic_name.as_deref() == Some(topic_name) {
                 found = true;
-                acc.subscription_gids.push(*gid);
+                if let Some(gid) = sub.endpoint_gid {
+                    acc.subscription_gids.push(gid);
+                }
+                acc.subscription_ids.push(id.clone());
                 if let Some(t) = &sub.type_name {
                     acc.type_names.insert(t.clone());
                 }
@@ -273,10 +413,12 @@ impl DiscoveryTable {
         found.then(|| TopicView {
             topic_name: topic_name.to_string(),
             type_names: acc.type_names.into_iter().collect(),
-            publisher_count: acc.publisher_gids.len(),
-            subscription_count: acc.subscription_gids.len(),
+            publisher_count: acc.publisher_ids.len(),
+            subscription_count: acc.subscription_ids.len(),
             publisher_gids: acc.publisher_gids,
             subscription_gids: acc.subscription_gids,
+            publisher_ids: acc.publisher_ids,
+            subscription_ids: acc.subscription_ids,
         })
     }
 
@@ -285,15 +427,19 @@ impl DiscoveryTable {
         participant: DiscoveredParticipant,
         observed_at: SystemTime,
     ) -> DiscoveryChange {
-        let Some(gid) = participant.guid else {
+        let id = participant
+            .participant_id
+            .or_else(|| participant.guid.map(ParticipantId::rtps));
+        let Some(id) = id else {
             return DiscoveryChange::Noop;
         };
+        let gid = participant.guid.or_else(|| id.rtps_gid());
         let expires_at = participant
             .lease_duration
             .and_then(duration_value_to_duration)
             .and_then(|lease| observed_at.checked_add(lease));
 
-        match self.participants.get_mut(&gid) {
+        match self.participants.get_mut(&id) {
             Some(entry) => {
                 // NOTE: always return `Updated` even when the advertised
                 // participant fields are identical to what we already have.
@@ -306,31 +452,41 @@ impl DiscoveryTable {
                 // those orphan mutations stuck out of `CommandState` until
                 // the next SEDP change, which some DDS implementations never
                 // emit after the initial endpoint announcement.
+                if let Some(previous_gid) = entry.gid {
+                    self.participant_gid_index.remove(&previous_gid);
+                }
+                if let Some(gid) = gid {
+                    self.participant_gid_index.insert(gid, id.clone());
+                }
+                entry.gid = gid;
                 entry.lease_duration = participant.lease_duration;
                 entry.default_unicast_locators = participant.default_unicast_locators;
                 entry.metatraffic_unicast_locators = participant.metatraffic_unicast_locators;
                 entry.metatraffic_multicast_locators = participant.metatraffic_multicast_locators;
                 entry.last_seen_at = observed_at;
                 entry.expires_at = expires_at;
-                self.refresh_endpoint_expiration_for_participant(gid, expires_at, observed_at);
+                self.refresh_endpoint_expiration_for_participant(&id, expires_at, observed_at);
                 DiscoveryChange::Updated
             }
             None => {
                 self.participants.insert(
-                    gid,
+                    id.clone(),
                     ParticipantEntry {
+                        id: id.clone(),
                         gid,
                         lease_duration: participant.lease_duration,
                         default_unicast_locators: participant.default_unicast_locators,
                         metatraffic_unicast_locators: participant.metatraffic_unicast_locators,
-                        metatraffic_multicast_locators: participant
-                            .metatraffic_multicast_locators,
+                        metatraffic_multicast_locators: participant.metatraffic_multicast_locators,
                         first_seen_at: observed_at,
                         last_seen_at: observed_at,
                         expires_at,
                     },
                 );
-                self.refresh_endpoint_expiration_for_participant(gid, expires_at, observed_at);
+                if let Some(gid) = gid {
+                    self.participant_gid_index.insert(gid, id.clone());
+                }
+                self.refresh_endpoint_expiration_for_participant(&id, expires_at, observed_at);
                 DiscoveryChange::Inserted
             }
         }
@@ -338,7 +494,7 @@ impl DiscoveryTable {
 
     fn refresh_endpoint_expiration_for_participant(
         &mut self,
-        participant_gid: TopicGid,
+        participant_id: &ParticipantId,
         participant_expires_at: Option<SystemTime>,
         observed_at: SystemTime,
     ) {
@@ -354,24 +510,24 @@ impl DiscoveryTable {
 
         refresh_endpoint_map_expiration(
             &mut self.publications,
-            participant_gid,
+            participant_id,
             refreshed_expires_at,
         );
         refresh_endpoint_map_expiration(
             &mut self.subscriptions,
-            participant_gid,
+            participant_id,
             refreshed_expires_at,
         );
     }
 
     fn endpoint_expires_at(
         &self,
-        participant_gid: Option<TopicGid>,
+        participant_id: Option<&ParticipantId>,
         observed_at: SystemTime,
     ) -> Option<SystemTime> {
         let endpoint_deadline = observed_at.checked_add(self.default_endpoint_ttl);
-        let participant_deadline =
-            participant_gid.and_then(|gid| self.participants.get(&gid).and_then(|entry| entry.expires_at));
+        let participant_deadline = participant_id
+            .and_then(|id| self.participants.get(id).and_then(|entry| entry.expires_at));
 
         match (participant_deadline, endpoint_deadline) {
             (Some(participant_deadline), Some(endpoint_deadline)) => {
@@ -384,31 +540,50 @@ impl DiscoveryTable {
     }
 
     fn upsert_endpoint(
-        map: &mut BTreeMap<TopicGid, EndpointEntry>,
+        map: &mut BTreeMap<EndpointId, EndpointEntry>,
+        gid_index: &mut BTreeMap<TopicGid, EndpointId>,
         endpoint: DiscoveredEndpoint,
         observed_at: SystemTime,
         expires_at: Option<SystemTime>,
     ) -> DiscoveryChange {
-        let Some(endpoint_gid) = endpoint.endpoint_gid else {
+        let endpoint_id = endpoint
+            .endpoint_id
+            .or_else(|| endpoint.endpoint_gid.map(EndpointId::rtps));
+        let Some(endpoint_id) = endpoint_id else {
             return DiscoveryChange::Noop;
         };
+        let endpoint_gid = endpoint.endpoint_gid.or_else(|| endpoint_id.rtps_gid());
+        let participant_id = endpoint
+            .participant_id
+            .or_else(|| endpoint.participant_gid.map(ParticipantId::rtps));
 
-        match map.get_mut(&endpoint_gid) {
+        match map.get_mut(&endpoint_id) {
             Some(entry) => {
                 // NOTE: we intentionally always return Updated here even when the
                 // endpoint fields are unchanged. CommandState.topic_details depends
                 // on the external `remote_participants` set which can change between
                 // equal SEDP beats; skipping refresh on unchanged SEDP would leave
                 // topic.local_only stale when a participant's IP migrates.
+                if let Some(previous_gid) = entry.endpoint_gid {
+                    gid_index.remove(&previous_gid);
+                }
+                if let Some(endpoint_gid) = endpoint_gid {
+                    gid_index.insert(endpoint_gid, endpoint_id.clone());
+                }
+                entry.endpoint_gid = endpoint_gid;
                 entry.participant_gid = endpoint.participant_gid;
+                entry.participant_id = participant_id;
                 entry.topic_name = endpoint.topic_name;
                 entry.type_name = endpoint.type_name;
+                entry.type_hash = endpoint.type_hash;
+                entry.history = endpoint.history;
                 entry.reliability = endpoint.reliability;
                 entry.durability = endpoint.durability;
                 entry.deadline = endpoint.deadline;
                 entry.latency_budget = endpoint.latency_budget;
                 entry.lifespan = endpoint.lifespan;
                 entry.liveliness = endpoint.liveliness;
+                entry.liveliness_lease_duration = endpoint.liveliness_lease_duration;
                 entry.unicast_locators = endpoint.unicast_locators;
                 entry.multicast_locators = endpoint.multicast_locators;
                 entry.last_seen_at = observed_at;
@@ -417,18 +592,23 @@ impl DiscoveryTable {
             }
             None => {
                 map.insert(
-                    endpoint_gid,
+                    endpoint_id.clone(),
                     EndpointEntry {
+                        endpoint_id: endpoint_id.clone(),
                         endpoint_gid,
                         participant_gid: endpoint.participant_gid,
+                        participant_id,
                         topic_name: endpoint.topic_name,
                         type_name: endpoint.type_name,
+                        type_hash: endpoint.type_hash,
+                        history: endpoint.history,
                         reliability: endpoint.reliability,
                         durability: endpoint.durability,
                         deadline: endpoint.deadline,
                         latency_budget: endpoint.latency_budget,
                         lifespan: endpoint.lifespan,
                         liveliness: endpoint.liveliness,
+                        liveliness_lease_duration: endpoint.liveliness_lease_duration,
                         unicast_locators: endpoint.unicast_locators,
                         multicast_locators: endpoint.multicast_locators,
                         first_seen_at: observed_at,
@@ -436,6 +616,9 @@ impl DiscoveryTable {
                         expires_at,
                     },
                 );
+                if let Some(endpoint_gid) = endpoint_gid {
+                    gid_index.insert(endpoint_gid, endpoint_id);
+                }
                 DiscoveryChange::Inserted
             }
         }
@@ -456,11 +639,27 @@ impl NodeTable {
     }
 
     pub fn node_for_writer(&self, gid: &TopicGid) -> Option<&NodeEntry> {
-        self.writer_index.get(gid).and_then(|key| self.nodes.get(key))
+        self.writer_index
+            .get(gid)
+            .and_then(|key| self.nodes.get(key))
+    }
+
+    pub fn node_for_writer_id(&self, id: &EndpointId) -> Option<&NodeEntry> {
+        self.writer_id_index
+            .get(id)
+            .and_then(|key| self.nodes.get(key))
     }
 
     pub fn node_for_reader(&self, gid: &TopicGid) -> Option<&NodeEntry> {
-        self.reader_index.get(gid).and_then(|key| self.nodes.get(key))
+        self.reader_index
+            .get(gid)
+            .and_then(|key| self.nodes.get(key))
+    }
+
+    pub fn node_for_reader_id(&self, id: &EndpointId) -> Option<&NodeEntry> {
+        self.reader_id_index
+            .get(id)
+            .and_then(|key| self.nodes.get(key))
     }
 
     pub fn nodes_for_participant(&self, participant_gid: &TopicGid) -> Vec<&NodeEntry> {
@@ -472,8 +671,24 @@ impl NodeTable {
             .collect()
     }
 
+    pub fn nodes_for_participant_id(&self, participant_id: &ParticipantId) -> Vec<&NodeEntry> {
+        self.participant_id_index
+            .get(participant_id)
+            .into_iter()
+            .flat_map(|keys| keys.iter())
+            .filter_map(|key| self.nodes.get(key))
+            .collect()
+    }
+
     pub fn upsert_sample(&mut self, sample: NodeSample, observed_at: SystemTime) {
+        let participant_id = sample
+            .participant_id
+            .or_else(|| sample.participant_gid.map(ParticipantId::rtps));
+        let Some(participant_id) = participant_id else {
+            return;
+        };
         let key = NodeKey {
+            participant_id: participant_id.clone(),
             participant_gid: sample.participant_gid,
             node_namespace: sample.node_namespace,
             node_name: sample.node_name,
@@ -487,6 +702,16 @@ impl NodeTable {
         writer_gids.extend(sample.writer_gids);
         let mut reader_gids = BTreeSet::new();
         reader_gids.extend(sample.reader_gids);
+        let mut writer_endpoint_ids = sample
+            .writer_endpoint_ids
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        writer_endpoint_ids.extend(writer_gids.iter().copied().map(EndpointId::rtps));
+        let mut reader_endpoint_ids = sample
+            .reader_endpoint_ids
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        reader_endpoint_ids.extend(reader_gids.iter().copied().map(EndpointId::rtps));
 
         let first_seen_at = self
             .nodes
@@ -497,6 +722,9 @@ impl NodeTable {
             key: key.clone(),
             writer_gids,
             reader_gids,
+            writer_endpoint_ids,
+            reader_endpoint_ids,
+            participant_id,
             first_seen_at,
             last_seen_at: observed_at,
         };
@@ -513,10 +741,17 @@ impl NodeTable {
     ) {
         let retained = samples
             .iter()
-            .map(|sample| NodeKey {
-                participant_gid: sample.participant_gid,
-                node_namespace: sample.node_namespace.clone(),
-                node_name: sample.node_name.clone(),
+            .filter_map(|sample| {
+                let participant_id = sample
+                    .participant_id
+                    .clone()
+                    .or_else(|| sample.participant_gid.map(ParticipantId::rtps))?;
+                Some(NodeKey {
+                    participant_id,
+                    participant_gid: sample.participant_gid,
+                    node_namespace: sample.node_namespace.clone(),
+                    node_name: sample.node_name.clone(),
+                })
             })
             .collect::<BTreeSet<_>>();
 
@@ -544,8 +779,14 @@ impl NodeTable {
     }
 
     fn insert_indexes(&mut self, entry: &NodeEntry) {
-        self.participant_index
-            .entry(entry.key.participant_gid)
+        if let Some(participant_gid) = entry.key.participant_gid {
+            self.participant_index
+                .entry(participant_gid)
+                .or_default()
+                .insert(entry.key.clone());
+        }
+        self.participant_id_index
+            .entry(entry.participant_id.clone())
             .or_default()
             .insert(entry.key.clone());
 
@@ -554,6 +795,12 @@ impl NodeTable {
         }
         for gid in &entry.reader_gids {
             self.reader_index.insert(*gid, entry.key.clone());
+        }
+        for id in &entry.writer_endpoint_ids {
+            self.writer_id_index.insert(id.clone(), entry.key.clone());
+        }
+        for id in &entry.reader_endpoint_ids {
+            self.reader_id_index.insert(id.clone(), entry.key.clone());
         }
     }
 
@@ -564,11 +811,25 @@ impl NodeTable {
         for gid in &entry.reader_gids {
             self.reader_index.remove(gid);
         }
+        for id in &entry.writer_endpoint_ids {
+            self.writer_id_index.remove(id);
+        }
+        for id in &entry.reader_endpoint_ids {
+            self.reader_id_index.remove(id);
+        }
 
-        if let Some(keys) = self.participant_index.get_mut(&entry.key.participant_gid) {
+        if let Some(participant_gid) = entry.key.participant_gid {
+            if let Some(keys) = self.participant_index.get_mut(&participant_gid) {
+                keys.remove(&entry.key);
+                if keys.is_empty() {
+                    self.participant_index.remove(&participant_gid);
+                }
+            }
+        }
+        if let Some(keys) = self.participant_id_index.get_mut(&entry.participant_id) {
             keys.remove(&entry.key);
             if keys.is_empty() {
-                self.participant_index.remove(&entry.key.participant_gid);
+                self.participant_id_index.remove(&entry.participant_id);
             }
         }
     }
@@ -585,31 +846,58 @@ struct TopicAccumulator {
     type_names: BTreeSet<String>,
     publisher_gids: Vec<TopicGid>,
     subscription_gids: Vec<TopicGid>,
+    publisher_ids: Vec<EndpointId>,
+    subscription_ids: Vec<EndpointId>,
 }
 
 fn expire_endpoints(
-    entries: &mut BTreeMap<TopicGid, EndpointEntry>,
+    entries: &mut BTreeMap<EndpointId, EndpointEntry>,
+    gid_index: &mut BTreeMap<TopicGid, EndpointId>,
     now: SystemTime,
 ) -> usize {
     let expired = entries
         .iter()
-        .filter_map(|(gid, entry)| is_expired(entry.expires_at, now).then_some(*gid))
+        .filter_map(|(id, entry)| is_expired(entry.expires_at, now).then_some(id.clone()))
         .collect::<Vec<_>>();
 
     let removed = expired.len();
-    for gid in expired {
-        entries.remove(&gid);
+    for id in expired {
+        if let Some(entry) = entries.remove(&id) {
+            if let Some(gid) = entry.endpoint_gid {
+                gid_index.remove(&gid);
+            }
+        }
     }
     removed
 }
 
+fn remove_participant_endpoints(
+    entries: &mut BTreeMap<EndpointId, EndpointEntry>,
+    gid_index: &mut BTreeMap<TopicGid, EndpointId>,
+    participant_id: &ParticipantId,
+) {
+    let removed = entries
+        .iter()
+        .filter_map(|(id, entry)| {
+            (entry.participant_id.as_ref() == Some(participant_id)).then_some(id.clone())
+        })
+        .collect::<Vec<_>>();
+    for id in removed {
+        if let Some(entry) = entries.remove(&id) {
+            if let Some(gid) = entry.endpoint_gid {
+                gid_index.remove(&gid);
+            }
+        }
+    }
+}
+
 fn refresh_endpoint_map_expiration(
-    entries: &mut BTreeMap<TopicGid, EndpointEntry>,
-    participant_gid: TopicGid,
+    entries: &mut BTreeMap<EndpointId, EndpointEntry>,
+    participant_id: &ParticipantId,
     expires_at: Option<SystemTime>,
 ) {
     for entry in entries.values_mut() {
-        if entry.participant_gid == Some(participant_gid) {
+        if entry.participant_id.as_ref() == Some(participant_id) {
             entry.expires_at = expires_at;
         }
     }

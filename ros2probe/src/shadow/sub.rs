@@ -78,7 +78,10 @@ su -s /bin/sh {username} -c '{ros_source} . /run/ros2probe_env.sh && ros2 topic 
             .spawn()
             .context("spawn shadow subscriber")?;
 
-        Ok(Self { child: Some(child), topic: topic.to_string() })
+        Ok(Self {
+            child: Some(child),
+            topic: topic.to_string(),
+        })
     }
 
     pub fn topic(&self) -> &str {
@@ -101,16 +104,22 @@ impl Drop for ShadowSubscriber {
         // child to avoid zombies and force-kills any descendant that ignores
         // SIGTERM. `su` starts a new session so SIGKILL on the root doesn't
         // cascade — we walk /proc to collect the tree before signaling.
-        let Some(mut child) = self.child.take() else { return };
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
         let pid = child.id() as i32;
         let descendants = collect_descendants(pid);
         for p in &descendants {
-            unsafe { libc::kill(*p, libc::SIGTERM); }
+            unsafe {
+                libc::kill(*p, libc::SIGTERM);
+            }
         }
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(500));
             for p in &descendants {
-                unsafe { libc::kill(*p, libc::SIGKILL); }
+                unsafe {
+                    libc::kill(*p, libc::SIGKILL);
+                }
             }
             let _ = child.wait();
         });
@@ -122,10 +131,14 @@ fn collect_descendants(root: i32) -> Vec<i32> {
     let mut queue = vec![root];
     while let Some(pid) = queue.pop() {
         let task_dir = format!("/proc/{pid}/task");
-        let Ok(entries) = std::fs::read_dir(&task_dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&task_dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path().join("children");
-            let Ok(content) = std::fs::read_to_string(&path) else { continue };
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             for tok in content.split_whitespace() {
                 if let Ok(cp) = tok.parse::<i32>() {
                     result.push(cp);

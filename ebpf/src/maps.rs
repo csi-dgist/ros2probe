@@ -2,7 +2,7 @@ use aya_ebpf::{
     macros::map,
     maps::{HashMap, LruHashMap},
 };
-use ros2probe_common::{MAX_FRAGMENT_FLOWS, MAX_TOPIC_GIDS, TopicGid};
+use ros2probe_common::{MAX_FRAGMENT_FLOWS, MAX_TOPIC_GIDS, MAX_ZENOH_PORTS, TopicGid};
 
 #[map]
 pub static TOPIC_FILTER_GIDS: HashMap<TopicGid, u8> =
@@ -10,6 +10,22 @@ pub static TOPIC_FILTER_GIDS: HashMap<TopicGid, u8> =
 
 pub fn gid_state(gid: &TopicGid) -> Option<u8> {
     unsafe { TOPIC_FILTER_GIDS.get(gid) }.copied()
+}
+
+#[map]
+pub static ZENOH_UDP_PORTS: HashMap<u16, u8> =
+    HashMap::<u16, u8>::with_max_entries(MAX_ZENOH_PORTS, 0);
+
+#[map]
+pub static ZENOH_TCP_PORTS: HashMap<u16, u8> =
+    HashMap::<u16, u8>::with_max_entries(MAX_ZENOH_PORTS, 0);
+
+pub fn zenoh_udp_port(port: u16) -> bool {
+    unsafe { ZENOH_UDP_PORTS.get(&port) }.is_some()
+}
+
+pub fn zenoh_tcp_port(port: u16) -> bool {
+    unsafe { ZENOH_TCP_PORTS.get(&port) }.is_some()
 }
 
 /// Per-datagram "approved fragments" table. Keyed by the IP-layer fragment

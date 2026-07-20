@@ -63,6 +63,10 @@ fn wait_for_stats() -> anyhow::Result<()> {
                             if !response.active {
                                 return Ok(());
                             }
+                            if response.clock_mismatch {
+                                println!("header.stamp clock does not match capture wall clock");
+                                return Ok(());
+                            }
                             if response.missing_header {
                                 println!("msg does not have header");
                                 return Ok(());

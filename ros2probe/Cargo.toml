@@ -43,6 +43,12 @@ tokio = { workspace = true, features = [
     "net",
     "signal",
 ] }
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
+zenoh = { workspace = true }
+zenoh-buffers = { workspace = true }
+zenoh-codec = { workspace = true }
+zenoh-protocol = { workspace = true }
+zenoh-transport = { workspace = true }
 [build-dependencies]
 anyhow = { workspace = true }
 aya-build = { workspace = true }

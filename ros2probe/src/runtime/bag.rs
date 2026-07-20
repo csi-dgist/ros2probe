@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::bail;
+use bytes::Bytes;
 use chrono::Local;
 use ros2probe_common::TopicGid;
 
@@ -44,7 +45,7 @@ pub(super) struct RecordingSession {
     pub compression: CompressionConfig,
     pub no_discovery: bool,
     pub paused: bool,
-    channels: HashMap<TopicGid, u16>,
+    channels: HashMap<String, u16>,
     channel_sequences: HashMap<u16, u32>,
 }
 
@@ -107,10 +108,27 @@ pub(super) fn start_recording(
     discovery_table: &crate::discovery::DiscoveryTable,
     recorder_handle: &RecorderHandle,
 ) -> anyhow::Result<RecordingSession> {
+    let previous_mode = gid_map.mode().clone();
     gid_map.configure(&options.topics);
-    gid_map.rebuild_from_table(discovery_table)?;
+    if let Err(err) = gid_map.rebuild_from_table(discovery_table) {
+        gid_map.configure_mode(previous_mode);
+        return match gid_map.rebuild_from_table(discovery_table) {
+            Ok(_) => Err(err),
+            Err(rollback_err) => Err(anyhow::anyhow!(
+                "{err:#}; additionally failed to restore the previous topic filter: {rollback_err:#}"
+            )),
+        };
+    }
 
-    recorder_handle.start(options.output.clone(), options.compression)?;
+    if let Err(err) = recorder_handle.start(options.output.clone(), options.compression) {
+        gid_map.configure_mode(previous_mode);
+        return match gid_map.rebuild_from_table(discovery_table) {
+            Ok(_) => Err(err),
+            Err(rollback_err) => Err(anyhow::anyhow!(
+                "{err:#}; additionally failed to restore the previous topic filter: {rollback_err:#}"
+            )),
+        };
+    }
     Ok(RecordingSession {
         output: options.output,
         topics: options.topics,
@@ -127,7 +145,7 @@ pub(super) fn stop_recording(
     gid_map: &mut RecorderTopicGidMap,
     recorder_handle: &RecorderHandle,
 ) -> anyhow::Result<BagStopResponse> {
-    if recording_session.take().is_none() {
+    if recording_session.is_none() {
         return Ok(BagStopResponse {
             stopped: false,
             output: None,
@@ -135,13 +153,19 @@ pub(super) fn stop_recording(
         });
     };
 
-    gid_map.clear()?;
-    // Invariant: if the shadow was `Some`, the actor also had an active
-    // recording (both are set/cleared together in `start_recording` /
-    // `stop_recording` / shutdown), so `stop()` returns `Some(path)` here.
-    // We still use `.map()` defensively rather than `.expect()` because a
-    // future actor refactor might legitimately break that coupling.
-    let (output, lost_messages) = recorder_handle.stop()?;
+    let stop_result = recorder_handle.stop();
+    recording_session.take();
+    let clear_result = gid_map.clear();
+    let (output, lost_messages) = match (stop_result, clear_result) {
+        (Ok(result), Ok(())) => result,
+        (Err(stop_err), Ok(())) => return Err(stop_err),
+        (Ok(_), Err(clear_err)) => return Err(clear_err),
+        (Err(stop_err), Err(clear_err)) => {
+            return Err(anyhow::anyhow!(
+                "{stop_err:#}; additionally failed to clear the topic filter: {clear_err:#}"
+            ));
+        }
+    };
     Ok(BagStopResponse {
         stopped: true,
         output: output.map(|p| p.display().to_string()),
@@ -203,27 +227,73 @@ pub(super) fn record_message(
         return;
     }
 
-    if !session.channels.contains_key(&topic_gid) {
-        let type_name = metadata.type_name.as_deref().unwrap_or("unknown/Unknown");
-        match recorder_handle.ensure_channel(&metadata.topic_name, type_name, "") {
+    record_payload(
+        session,
+        recorder_handle,
+        rtps_channel_key(&topic_gid),
+        &metadata.topic_name,
+        metadata.type_name.as_deref(),
+        message.captured_at,
+        message.payload.clone(),
+    );
+}
+
+pub(super) fn record_topic_sample(
+    session: &mut RecordingSession,
+    recorder_handle: &RecorderHandle,
+    topic_name: &str,
+    type_name: Option<&str>,
+    captured_at: SystemTime,
+    payload: Bytes,
+) {
+    if session.paused {
+        return;
+    }
+    if !session.topics.is_empty() && !session.topics.iter().any(|topic| topic == topic_name) {
+        return;
+    }
+    if should_skip_discovery_topic(session, topic_name) {
+        return;
+    }
+
+    record_payload(
+        session,
+        recorder_handle,
+        topic_channel_key(topic_name, type_name),
+        topic_name,
+        type_name,
+        captured_at,
+        payload,
+    );
+}
+
+fn record_payload(
+    session: &mut RecordingSession,
+    recorder_handle: &RecorderHandle,
+    channel_key: String,
+    topic_name: &str,
+    type_name: Option<&str>,
+    captured_at: SystemTime,
+    payload: Bytes,
+) {
+    if !session.channels.contains_key(&channel_key) {
+        let type_name = type_name.unwrap_or("unknown/Unknown");
+        match recorder_handle.ensure_channel(topic_name, type_name, "") {
             Ok(channel_id) => {
-                session.channels.insert(topic_gid, channel_id);
+                session.channels.insert(channel_key.clone(), channel_id);
             }
             Err(err) => {
-                log::warn!(
-                    "failed to create MCAP channel for {}: {err:#}",
-                    metadata.topic_name
-                );
+                log::warn!("failed to create MCAP channel for {}: {err:#}", topic_name);
                 return;
             }
         }
     }
 
-    let Some(channel_id) = session.channels.get(&topic_gid).copied() else {
+    let Some(channel_id) = session.channels.get(&channel_key).copied() else {
         return;
     };
-    let Ok(timestamp) = system_time_to_nanos(message.captured_at) else {
-        log::warn!("failed to convert message timestamp for {}", metadata.topic_name);
+    let Ok(timestamp) = system_time_to_nanos(captured_at) else {
+        log::warn!("failed to convert message timestamp for {}", topic_name);
         return;
     };
     let sequence = session.channel_sequences.entry(channel_id).or_insert(0);
@@ -232,13 +302,26 @@ pub(super) fn record_message(
         sequence: *sequence,
         log_time: timestamp,
         publish_time: timestamp,
-        payload: message.payload.clone(),
+        payload,
     };
-    if recorder_handle.try_record(record, &metadata.topic_name) {
+    if recorder_handle.try_record(record, topic_name) {
         *sequence = sequence.saturating_add(1);
     }
     // Drops are tracked by the handle's counter; log at a low rate elsewhere
     // so we don't spam the log on overload.
+}
+
+fn rtps_channel_key(gid: &TopicGid) -> String {
+    let hex = gid
+        .bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("rtps:{hex}")
+}
+
+fn topic_channel_key(topic_name: &str, type_name: Option<&str>) -> String {
+    format!("topic:{topic_name}:{}", type_name.unwrap_or(""))
 }
 
 fn system_time_to_nanos(timestamp: SystemTime) -> anyhow::Result<u64> {

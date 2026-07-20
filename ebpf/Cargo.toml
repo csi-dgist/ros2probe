@@ -7,6 +7,10 @@ edition.workspace = true
 # rest of the workspace. Same model as Cilium et al.
 license = "GPL-2.0 OR Apache-2.0"
 
+[features]
+default = []
+ebpf-bin = []
+
 [dependencies]
 ros2probe-common = { path = "../common" }
 
@@ -19,3 +23,6 @@ which = { workspace = true }
 [[bin]]
 name = "ros2probe"
 path = "src/main.rs"
+test = false
+bench = false
+required-features = ["ebpf-bin"]

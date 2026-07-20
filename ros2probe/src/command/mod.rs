@@ -1,9 +1,9 @@
 pub mod action;
 pub mod bag;
+pub mod discover;
 pub mod node;
 pub mod protocol;
-pub mod service;
 pub mod server;
-pub mod discover;
+pub mod service;
 pub mod state;
 pub mod topic;

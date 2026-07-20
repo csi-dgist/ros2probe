@@ -11,9 +11,9 @@ use std::{
     collections::BTreeMap,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
-        mpsc, Mutex,
+        mpsc,
     },
     thread,
 };

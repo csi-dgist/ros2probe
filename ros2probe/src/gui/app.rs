@@ -41,7 +41,11 @@ impl Ros2ProbeGuiApp {
         egui::SidePanel::left("app_sidebar")
             .resizable(false)
             .exact_width(168.0)
-            .frame(egui::Frame::new().fill(SIDEBAR_BG).inner_margin(egui::Margin::same(10)))
+            .frame(
+                egui::Frame::new()
+                    .fill(SIDEBAR_BG)
+                    .inner_margin(egui::Margin::same(10)),
+            )
             .show(ctx, |ui| {
                 ui.add_space(4.0);
                 ui.label(
@@ -51,7 +55,7 @@ impl Ros2ProbeGuiApp {
                         .size(16.0),
                 );
                 ui.label(
-                    egui::RichText::new("DDS · Monitoring")
+                    egui::RichText::new("Monitoring")
                         .small()
                         .color(egui::Color32::from_rgb(120, 135, 155)),
                 );
@@ -63,10 +67,17 @@ impl Ros2ProbeGuiApp {
                     (Page::BagRecorder, "Bag Recorder"),
                 ] {
                     let selected = self.current_page == page;
-                    let text = egui::RichText::new(label)
-                        .color(if selected { SELECTED_TEXT } else { IDLE_TEXT });
+                    let text = egui::RichText::new(label).color(if selected {
+                        SELECTED_TEXT
+                    } else {
+                        IDLE_TEXT
+                    });
                     let btn = egui::Button::new(text)
-                        .fill(if selected { SELECTED_FILL } else { egui::Color32::TRANSPARENT })
+                        .fill(if selected {
+                            SELECTED_FILL
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        })
                         .stroke(egui::Stroke::NONE)
                         .corner_radius(egui::CornerRadius::same(6));
                     if ui.add_sized([ui.available_width(), 34.0], btn).clicked() {

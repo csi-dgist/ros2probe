@@ -16,5 +16,6 @@ pub fn build_response(_request: TopicListRequest, state: CommandState) -> TopicL
 }
 
 pub fn is_hidden_topic(name: &str) -> bool {
-    name.split('/').any(|seg| seg.starts_with('_') && !seg.is_empty())
+    name.split('/')
+        .any(|seg| seg.starts_with('_') && !seg.is_empty())
 }
