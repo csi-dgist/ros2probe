@@ -9,7 +9,11 @@ pub fn build_response(request: ServiceListRequest, state: CommandState) -> Servi
     if request.include_hidden {
         for action in &state.actions {
             let type_name = action.type_name.clone().unwrap_or_default();
-            for suffix in ["/_action/send_goal", "/_action/cancel_goal", "/_action/get_result"] {
+            for suffix in [
+                "/_action/send_goal",
+                "/_action/cancel_goal",
+                "/_action/get_result",
+            ] {
                 services.push(ServiceInfo {
                     name: format!("{}{suffix}", action.name),
                     type_name: type_name.clone(),

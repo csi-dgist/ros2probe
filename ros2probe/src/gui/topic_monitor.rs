@@ -90,6 +90,7 @@ struct MonitorState {
     hz_stats: Option<HzStats>,
     bw_stats: Option<BwStats>,
     delay_stats: Option<DelayStats>,
+    delay_clock_mismatch: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -101,6 +102,7 @@ struct MonitorSnapshot {
     hz_stats: Option<HzStats>,
     bw_stats: Option<BwStats>,
     delay_stats: Option<DelayStats>,
+    delay_clock_mismatch: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -208,6 +210,10 @@ impl TopicMonitorPage {
                     state.hz_stats = snapshot.hz_stats;
                     state.bw_stats = snapshot.bw_stats;
                     state.delay_stats = snapshot.delay_stats;
+                    state.delay_clock_mismatch = snapshot.delay_clock_mismatch;
+                    if snapshot.delay_clock_mismatch {
+                        state.delay_history.clear();
+                    }
                     if let Some(hz) = snapshot.hz {
                         state.hz_history.push_back(TimedSample {
                             time_secs: snapshot.time_secs,
@@ -590,11 +596,14 @@ impl TopicMonitorPage {
     }
 
     fn render_delay_section(&self, ui: &mut egui::Ui, now_secs: f64) {
-        let delay_label = self
-            .state
-            .delay_current
-            .map(|d| format!("{d:.2} ms"))
-            .unwrap_or_else(|| "No header.stamp".to_string());
+        let delay_label = if self.state.delay_clock_mismatch {
+            "Clock mismatch".to_string()
+        } else {
+            self.state
+                .delay_current
+                .map(|d| format!("{d:.2} ms"))
+                .unwrap_or_else(|| "No header.stamp".to_string())
+        };
 
         monitor_frame(ui, "Delay", &delay_label, DELAY_COLOR, |ui| {
             if let Some(stats) = &self.state.delay_stats {
@@ -1113,6 +1122,9 @@ fn monitor_worker(
                 hz_stats,
                 bw_stats,
                 delay_stats,
+                delay_clock_mismatch: hzbw
+                    .as_ref()
+                    .is_some_and(|status| status.delay_clock_mismatch),
             };
 
             if event_tx.send(MonitorEvent::Snapshot(snapshot)).is_err() {
@@ -1521,6 +1533,10 @@ fn render_endpoint_verbose(ui: &mut egui::Ui, ep: &crate::command::protocol::Top
                             _ => label_color,
                         };
                         qos_row(ui, "Reliability", v, color, false);
+                    }
+
+                    if let Some(v) = &ep.history {
+                        qos_row(ui, "History", v, egui::Color32::from_gray(80), false);
                     }
 
                     if let Some(v) = &ep.durability {

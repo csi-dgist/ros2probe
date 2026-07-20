@@ -63,5 +63,8 @@ pub fn run(args: TopicFindCommand) -> anyhow::Result<()> {
 }
 
 fn matches_type(topic: &TopicInfo, topic_type: &str) -> bool {
-    topic.type_names.iter().any(|type_name| type_name == topic_type)
+    topic
+        .type_names
+        .iter()
+        .any(|type_name| type_name == topic_type)
 }

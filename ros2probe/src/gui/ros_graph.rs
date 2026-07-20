@@ -44,7 +44,10 @@ pub fn is_recordable_topic(name: &str, graph: &GraphSnapshot) -> bool {
     if name == "/rosout" || name.ends_with("/parameter_events") {
         return false;
     }
-    if name.split('/').any(|seg| !seg.is_empty() && seg.starts_with('_')) {
+    if name
+        .split('/')
+        .any(|seg| !seg.is_empty() && seg.starts_with('_'))
+    {
         return false;
     }
     if t.subscribers.is_empty() {
@@ -76,7 +79,10 @@ impl LayoutWorker {
                 }
             }
         });
-        Self { tx: in_tx, rx: out_rx }
+        Self {
+            tx: in_tx,
+            rx: out_rx,
+        }
     }
 
     /// Submit a new graph for layout. Non-blocking; older pending work is
@@ -108,7 +114,9 @@ pub fn apply_filter(snapshot: &GraphSnapshot, filter: &GraphFilter) -> GraphSnap
     // 3. Hide topics where any path segment starts with '_'
     if filter.hide_debug {
         topics.retain(|t| {
-            !t.name.split('/').any(|seg| !seg.is_empty() && seg.starts_with('_'))
+            !t.name
+                .split('/')
+                .any(|seg| !seg.is_empty() && seg.starts_with('_'))
         });
     }
 
@@ -152,7 +160,10 @@ pub fn apply_filter(snapshot: &GraphSnapshot, filter: &GraphFilter) -> GraphSnap
         }
     }
 
-    GraphSnapshot { topics, isolated_nodes }
+    GraphSnapshot {
+        topics,
+        isolated_nodes,
+    }
 }
 
 /// Renders checkboxes for the graph filter and a legend for edge colors.
@@ -170,7 +181,10 @@ pub fn render_graph_filter_bar(ui: &mut egui::Ui, filter: &mut GraphFilter) -> b
         if ui.checkbox(&mut filter.hide_debug, "debug").changed() {
             changed = true;
         }
-        if ui.checkbox(&mut filter.hide_leaf_topics, "leaf topics").changed() {
+        if ui
+            .checkbox(&mut filter.hide_leaf_topics, "leaf topics")
+            .changed()
+        {
             changed = true;
         }
 
@@ -243,7 +257,10 @@ struct GraphViewState {
 
 impl Default for GraphViewState {
     fn default() -> Self {
-        Self { zoom: 1.0, pan: egui::Vec2::ZERO }
+        Self {
+            zoom: 1.0,
+            pan: egui::Vec2::ZERO,
+        }
     }
 }
 
@@ -257,7 +274,11 @@ fn compute_fit_zoom(layout: &LayoutedGraph, rect: egui::Rect) -> f32 {
     let avail_h = (rect.height() - GRAPH_PADDING * 2.0).max(1.0);
     let w = layout.width_in * DPI;
     let h = layout.height_in * DPI;
-    if w > 0.0 && h > 0.0 { (avail_w / w).min(avail_h / h) } else { 1.0 }
+    if w > 0.0 && h > 0.0 {
+        (avail_w / w).min(avail_h / h)
+    } else {
+        1.0
+    }
 }
 
 /// Padding (in graphviz inches) around topic nodes inside a namespace box.
@@ -282,9 +303,7 @@ fn topic_namespace(topic: &str) -> Option<String> {
 
 /// Groups topic names by their top-level namespace.
 /// Only namespaces with >= NS_MIN_TOPICS topics are returned.
-fn group_topics_by_namespace(
-    topic_names: &BTreeSet<String>,
-) -> BTreeMap<String, Vec<String>> {
+fn group_topics_by_namespace(topic_names: &BTreeSet<String>) -> BTreeMap<String, Vec<String>> {
     let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for t in topic_names {
         if let Some(ns) = topic_namespace(t) {
@@ -358,13 +377,14 @@ pub fn compute_graph_layout(graph: &GraphSnapshot) -> Option<LayoutedGraph> {
 
     // Enrich local_only on nodes and edges.
     // Build lookup: topic_name → GraphTopic
-    let topic_map: std::collections::HashMap<&str, &GraphTopic> = graph.topics.iter()
-        .map(|t| (t.name.as_str(), t))
-        .collect();
+    let topic_map: std::collections::HashMap<&str, &GraphTopic> =
+        graph.topics.iter().map(|t| (t.name.as_str(), t)).collect();
 
     for node in &mut layouted.nodes {
         if node.is_topic {
-            node.local_only = topic_map.get(node.name.as_str()).map_or(false, |t| t.local_only);
+            node.local_only = topic_map
+                .get(node.name.as_str())
+                .map_or(false, |t| t.local_only);
         }
     }
     for edge in &mut layouted.edges {
@@ -403,10 +423,22 @@ fn compute_namespace_boxes(
             continue;
         }
 
-        let min_x = ns_nodes.iter().map(|n| n.x - n.w * 0.5).fold(f32::MAX, f32::min);
-        let max_x = ns_nodes.iter().map(|n| n.x + n.w * 0.5).fold(f32::MIN, f32::max);
-        let min_y = ns_nodes.iter().map(|n| n.y - n.h * 0.5).fold(f32::MAX, f32::min);
-        let max_y = ns_nodes.iter().map(|n| n.y + n.h * 0.5).fold(f32::MIN, f32::max);
+        let min_x = ns_nodes
+            .iter()
+            .map(|n| n.x - n.w * 0.5)
+            .fold(f32::MAX, f32::min);
+        let max_x = ns_nodes
+            .iter()
+            .map(|n| n.x + n.w * 0.5)
+            .fold(f32::MIN, f32::max);
+        let min_y = ns_nodes
+            .iter()
+            .map(|n| n.y - n.h * 0.5)
+            .fold(f32::MAX, f32::min);
+        let max_y = ns_nodes
+            .iter()
+            .map(|n| n.y + n.h * 0.5)
+            .fold(f32::MIN, f32::max);
 
         boxes.push(LayoutNamespaceBox {
             label: ns.clone(),
@@ -428,7 +460,10 @@ fn dot_id(name: &str) -> String {
 
 fn topic_dot_id(name: &str) -> String {
     let prefixed = format!("{}{}", TOPIC_PREFIX, name);
-    format!("\"{}\"", prefixed.replace('\\', "\\\\").replace('"', "\\\""))
+    format!(
+        "\"{}\"",
+        prefixed.replace('\\', "\\\\").replace('"', "\\\"")
+    )
 }
 
 fn build_dot_source(
@@ -447,8 +482,7 @@ fn build_dot_source(
     }
 
     // Collect which topics are in a namespace cluster
-    let clustered: BTreeSet<String> =
-        ns_groups.values().flatten().cloned().collect();
+    let clustered: BTreeSet<String> = ns_groups.values().flatten().cloned().collect();
 
     // Namespace clusters
     for (ns, topics) in ns_groups {
@@ -477,10 +511,18 @@ fn build_dot_source(
 
     // Edges
     for (ros_node, topic) in pub_edges {
-        s.push_str(&format!("  {} -> {};\n", dot_id(ros_node), topic_dot_id(topic)));
+        s.push_str(&format!(
+            "  {} -> {};\n",
+            dot_id(ros_node),
+            topic_dot_id(topic)
+        ));
     }
     for (topic, ros_node) in sub_edges {
-        s.push_str(&format!("  {} -> {};\n", topic_dot_id(topic), dot_id(ros_node)));
+        s.push_str(&format!(
+            "  {} -> {};\n",
+            topic_dot_id(topic),
+            dot_id(ros_node)
+        ));
     }
 
     s.push_str("}\n");
@@ -504,16 +546,23 @@ fn tokenize(line: &str) -> Vec<String> {
             loop {
                 match chars.next() {
                     None => break,
-                    Some('\\') if !esc => { esc = true; }
+                    Some('\\') if !esc => {
+                        esc = true;
+                    }
                     Some('"') if !esc => break,
-                    Some(ch) => { esc = false; tok.push(ch); }
+                    Some(ch) => {
+                        esc = false;
+                        tok.push(ch);
+                    }
                 }
             }
             tokens.push(tok);
         } else {
             let mut tok = String::new();
             while let Some(&ch) = chars.peek() {
-                if ch.is_ascii_whitespace() { break; }
+                if ch.is_ascii_whitespace() {
+                    break;
+                }
                 tok.push(ch);
                 chars.next();
             }
@@ -528,7 +577,9 @@ fn parse_plain_output(plain: &str) -> Option<LayoutedGraph> {
 
     for line in plain.lines() {
         let tok = tokenize(line);
-        if tok.is_empty() { continue; }
+        if tok.is_empty() {
+            continue;
+        }
         match tok[0].as_str() {
             "graph" if tok.len() >= 4 => {
                 layouted.width_in = tok[2].parse().unwrap_or(1.0);
@@ -536,12 +587,11 @@ fn parse_plain_output(plain: &str) -> Option<LayoutedGraph> {
             }
             "node" if tok.len() >= 6 => {
                 let raw = tok[1].clone();
-                let (name, is_topic) =
-                    if let Some(stripped) = raw.strip_prefix(TOPIC_PREFIX) {
-                        (stripped.to_string(), true)
-                    } else {
-                        (raw, false)
-                    };
+                let (name, is_topic) = if let Some(stripped) = raw.strip_prefix(TOPIC_PREFIX) {
+                    (stripped.to_string(), true)
+                } else {
+                    (raw, false)
+                };
                 layouted.nodes.push(LayoutNode {
                     name,
                     x: tok[2].parse().unwrap_or(0.0),
@@ -556,7 +606,9 @@ fn parse_plain_output(plain: &str) -> Option<LayoutedGraph> {
                 let tail = tok[1].clone();
                 let head = tok[2].clone();
                 let n: usize = tok[3].parse().unwrap_or(0);
-                if tok.len() < 4 + n * 2 { continue; }
+                if tok.len() < 4 + n * 2 {
+                    continue;
+                }
                 let mut points = Vec::with_capacity(n);
                 for i in 0..n {
                     points.push((
@@ -564,7 +616,12 @@ fn parse_plain_output(plain: &str) -> Option<LayoutedGraph> {
                         tok[5 + i * 2].parse().unwrap_or(0.0),
                     ));
                 }
-                layouted.edges.push(LayoutEdge { points, tail, head, local_only: false });
+                layouted.edges.push(LayoutEdge {
+                    points,
+                    tail,
+                    head,
+                    local_only: false,
+                });
             }
             _ => {}
         }
@@ -575,21 +632,17 @@ fn parse_plain_output(plain: &str) -> Option<LayoutedGraph> {
 
 // ── Public render entry point ─────────────────────────────────────────────────
 
-pub fn render_ros_graph(
-    ui: &mut egui::Ui,
-    layout: Option<&LayoutedGraph>,
-    graph: &GraphSnapshot,
-) {
+pub fn render_ros_graph(ui: &mut egui::Ui, layout: Option<&LayoutedGraph>, graph: &GraphSnapshot) {
     let desired_size = egui::vec2(ui.available_width(), ui.available_height().max(200.0));
-    let (rect, response) =
-        ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
 
     let painter = ui.painter_at(rect);
     draw_panel_background(&painter, rect);
 
     if graph.topics.is_empty() && graph.isolated_nodes.is_empty() {
         painter.text(
-            rect.center(), egui::Align2::CENTER_CENTER,
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
             "No graph edges available yet.",
             egui::TextStyle::Body.resolve(ui.style()),
             egui::Color32::from_gray(110),
@@ -599,7 +652,8 @@ pub fn render_ros_graph(
 
     let Some(layout) = layout else {
         painter.text(
-            rect.center(), egui::Align2::CENTER_CENTER,
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
             "Computing layout...",
             egui::TextStyle::Body.resolve(ui.style()),
             egui::Color32::from_gray(110),
@@ -609,8 +663,12 @@ pub fn render_ros_graph(
 
     let view_id = egui::Id::new("ros_graph_view");
     let fit_zoom = compute_fit_zoom(layout, rect);
-    let mut view: GraphViewState = ui.data(|d| d.get_temp(view_id))
-        .unwrap_or_else(|| GraphViewState { zoom: fit_zoom, pan: egui::Vec2::ZERO });
+    let mut view: GraphViewState =
+        ui.data(|d| d.get_temp(view_id))
+            .unwrap_or_else(|| GraphViewState {
+                zoom: fit_zoom,
+                pan: egui::Vec2::ZERO,
+            });
 
     // Fullscreen button
     let fs_btn_rect = egui::Rect::from_min_size(
@@ -618,7 +676,9 @@ pub fn render_ros_graph(
         egui::vec2(22.0, 22.0),
     );
     let fs_btn = ui.interact(
-        fs_btn_rect, egui::Id::new("ros_graph_fs_btn"), egui::Sense::click(),
+        fs_btn_rect,
+        egui::Id::new("ros_graph_fs_btn"),
+        egui::Sense::click(),
     );
     let btn_bg = if fs_btn.hovered() {
         egui::Color32::from_rgba_premultiplied(80, 120, 180, 40)
@@ -632,7 +692,15 @@ pub fn render_ros_graph(
         let fs_rect = ui.ctx().screen_rect();
         let fs_fit = compute_fit_zoom(layout, fs_rect);
         let fs_id = egui::Id::new("ros_graph_view_fs");
-        ui.data_mut(|d| d.insert_temp(fs_id, GraphViewState { zoom: fs_fit, pan: egui::Vec2::ZERO }));
+        ui.data_mut(|d| {
+            d.insert_temp(
+                fs_id,
+                GraphViewState {
+                    zoom: fs_fit,
+                    pan: egui::Vec2::ZERO,
+                },
+            )
+        });
         ui.data_mut(|d| d.insert_temp(egui::Id::new("ros_graph_fullscreen"), true));
     }
 
@@ -643,8 +711,10 @@ pub fn render_ros_graph(
     ui.data_mut(|d| d.insert_temp(view_id, view.clone()));
     draw_graph_content(&painter, rect, layout, &view);
 
-    let is_fullscreen: bool =
-        ui.data(|d| d.get_temp(egui::Id::new("ros_graph_fullscreen")).unwrap_or(false));
+    let is_fullscreen: bool = ui.data(|d| {
+        d.get_temp(egui::Id::new("ros_graph_fullscreen"))
+            .unwrap_or(false)
+    });
     if is_fullscreen {
         render_fullscreen(ui, layout);
     }
@@ -668,8 +738,12 @@ fn render_fullscreen(ui: &mut egui::Ui, layout: &LayoutedGraph) {
             painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(245, 248, 252));
 
             let fit_zoom = compute_fit_zoom(layout, rect);
-            let mut view: GraphViewState = ui.data(|d| d.get_temp(fs_view_id))
-                .unwrap_or_else(|| GraphViewState { zoom: fit_zoom, pan: egui::Vec2::ZERO });
+            let mut view: GraphViewState =
+                ui.data(|d| d.get_temp(fs_view_id))
+                    .unwrap_or_else(|| GraphViewState {
+                        zoom: fit_zoom,
+                        pan: egui::Vec2::ZERO,
+                    });
 
             // Close button
             let close_rect = egui::Rect::from_min_size(
@@ -677,7 +751,9 @@ fn render_fullscreen(ui: &mut egui::Ui, layout: &LayoutedGraph) {
                 egui::vec2(28.0, 28.0),
             );
             let close_btn = ui.interact(
-                close_rect, egui::Id::new("ros_graph_close_fs"), egui::Sense::click(),
+                close_rect,
+                egui::Id::new("ros_graph_close_fs"),
+                egui::Sense::click(),
             );
             let close_bg = if close_btn.hovered() {
                 egui::Color32::from_rgba_premultiplied(200, 60, 60, 50)
@@ -686,8 +762,11 @@ fn render_fullscreen(ui: &mut egui::Ui, layout: &LayoutedGraph) {
             };
             painter.rect_filled(close_rect, 6.0, close_bg);
             painter.text(
-                close_rect.center(), egui::Align2::CENTER_CENTER, "✕",
-                egui::FontId::proportional(14.0), egui::Color32::from_rgb(80, 80, 80),
+                close_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "✕",
+                egui::FontId::proportional(14.0),
+                egui::Color32::from_rgb(80, 80, 80),
             );
 
             if close_btn.clicked() || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -707,8 +786,10 @@ fn render_fullscreen(ui: &mut egui::Ui, layout: &LayoutedGraph) {
             );
             painter.text(
                 rect.left_bottom() + egui::vec2(12.0, -10.0),
-                egui::Align2::LEFT_BOTTOM, hint,
-                egui::FontId::proportional(10.0), egui::Color32::from_gray(150),
+                egui::Align2::LEFT_BOTTOM,
+                hint,
+                egui::FontId::proportional(10.0),
+                egui::Color32::from_gray(150),
             );
         });
 }
@@ -726,12 +807,17 @@ fn handle_view_input(
         view.pan += response.drag_delta();
     }
     if response.double_clicked() {
-        *view = GraphViewState { zoom: fit_zoom, pan: egui::Vec2::ZERO };
+        *view = GraphViewState {
+            zoom: fit_zoom,
+            pan: egui::Vec2::ZERO,
+        };
         return;
     }
     let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta.y);
     if scroll_delta != 0.0 {
-        let cursor = ui.ctx().input(|i| i.pointer.hover_pos().unwrap_or(rect.center()));
+        let cursor = ui
+            .ctx()
+            .input(|i| i.pointer.hover_pos().unwrap_or(rect.center()));
         if rect.contains(cursor) {
             let factor = (scroll_delta * 0.002).exp();
             let center = rect.center();
@@ -759,63 +845,73 @@ fn draw_graph_content(
     let base_bottom = rect.center().y + layout.height_in * DPI * 0.5;
 
     // Convert graphviz inches → base screen pos (no user zoom)
-    let to_base = |x: f32, y: f32| -> egui::Pos2 {
-        egui::pos2(base_left + x * DPI, base_bottom - y * DPI)
-    };
+    let to_base =
+        |x: f32, y: f32| -> egui::Pos2 { egui::pos2(base_left + x * DPI, base_bottom - y * DPI) };
     let to_px = |len: f32| len * DPI;
 
     // Apply user zoom + pan: screen = center + (base - center) * zoom + pan
     let vc = rect.center();
-    let apply = |p: egui::Pos2| -> egui::Pos2 {
-        vc + (p - vc) * view.zoom + view.pan
-    };
+    let apply = |p: egui::Pos2| -> egui::Pos2 { vc + (p - vc) * view.zoom + view.pan };
 
     let font_size = (BASE_FONT_SIZE * view.zoom).max(1.0);
     let painter = painter.with_clip_rect(rect);
 
     // ── 1. Namespace boxes ───────────────────────────────────────────────────
-    let ns_fill         = egui::Color32::from_rgb(234, 244, 234);
+    let ns_fill = egui::Color32::from_rgb(234, 244, 234);
     let ns_stroke_color = egui::Color32::from_rgb(130, 180, 130);
-    let ns_text_color   = egui::Color32::from_rgb(60, 110, 60);
+    let ns_text_color = egui::Color32::from_rgb(60, 110, 60);
 
     for ns_box in &layout.namespace_boxes {
         let c = apply(to_base(ns_box.cx, ns_box.cy));
         let w = to_px(ns_box.w) * view.zoom;
         let h = to_px(ns_box.h) * view.zoom;
         let r = egui::Rect::from_center_size(c, egui::vec2(w, h));
-        painter.rect(r, 6.0, ns_fill,
+        painter.rect(
+            r,
+            6.0,
+            ns_fill,
             egui::Stroke::new(1.5, ns_stroke_color),
             egui::StrokeKind::Outside,
         );
     }
 
     // ── 2. Edges ─────────────────────────────────────────────────────────────
-    let edge_color_net   = egui::Color32::from_rgb(190, 70, 70);
+    let edge_color_net = egui::Color32::from_rgb(190, 70, 70);
     let edge_color_local = egui::Color32::from_rgb(60, 160, 100);
     for edge in &layout.edges {
-        let sp: Vec<egui::Pos2> =
-            edge.points.iter().map(|&(x, y)| apply(to_base(x, y))).collect();
+        let sp: Vec<egui::Pos2> = edge
+            .points
+            .iter()
+            .map(|&(x, y)| apply(to_base(x, y)))
+            .collect();
         if !sp.is_empty() {
-            let color = if edge.local_only { edge_color_local } else { edge_color_net };
+            let color = if edge.local_only {
+                edge_color_local
+            } else {
+                edge_color_net
+            };
             draw_bezier_edge(&painter, &sp, color, 1.5);
         }
     }
 
     // ── 3. Nodes ─────────────────────────────────────────────────────────────
-    let ros_fill   = egui::Color32::from_rgb(220, 235, 248);
+    let ros_fill = egui::Color32::from_rgb(220, 235, 248);
     let ros_stroke = egui::Color32::from_rgb(90, 130, 170);
-    let topic_fill   = egui::Color32::from_rgb(255, 255, 255);
+    let topic_fill = egui::Color32::from_rgb(255, 255, 255);
     let topic_stroke = egui::Color32::from_rgb(90, 150, 90);
-    let text_color   = egui::Color32::from_rgb(25, 45, 65);
+    let text_color = egui::Color32::from_rgb(25, 45, 65);
 
     for node in &layout.nodes {
-        let c  = apply(to_base(node.x, node.y));
+        let c = apply(to_base(node.x, node.y));
         let rx = to_px(node.w) * view.zoom * 0.5;
         let ry = to_px(node.h) * view.zoom * 0.5;
 
         if node.is_topic {
             let node_rect = egui::Rect::from_center_size(c, egui::vec2(rx * 2.0, ry * 2.0));
-            painter.rect(node_rect, 0.0, topic_fill,
+            painter.rect(
+                node_rect,
+                0.0,
+                topic_fill,
                 egui::Stroke::new(1.0, topic_stroke),
                 egui::StrokeKind::Outside,
             );
@@ -829,8 +925,12 @@ fn draw_graph_content(
         }
 
         let label = clip_text(&painter, &node.name, (rx * 2.0 - 6.0).max(0.0), font_size);
-        painter.text(c, egui::Align2::CENTER_CENTER, label,
-            egui::FontId::proportional(font_size), text_color,
+        painter.text(
+            c,
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(font_size),
+            text_color,
         );
     }
 
@@ -852,7 +952,10 @@ fn draw_graph_content(
             label_pos - egui::vec2(3.0, 2.0),
             text_size + egui::vec2(6.0, 4.0),
         );
-        painter.rect(bg_rect, 4.0, ns_fill,
+        painter.rect(
+            bg_rect,
+            4.0,
+            ns_fill,
             egui::Stroke::new(1.0, ns_stroke_color),
             egui::StrokeKind::Outside,
         );
@@ -866,11 +969,16 @@ fn draw_graph_content(
     }
 
     // ── Zoom hint (not clipped, drawn on the rect's bottom-left) ─────────────
-    let hint = format!("{:.0}%  (scroll · drag · double-click to fit)", view.zoom * 100.0);
+    let hint = format!(
+        "{:.0}%  (scroll · drag · double-click to fit)",
+        view.zoom * 100.0
+    );
     painter.text(
         rect.left_bottom() + egui::vec2(10.0, -8.0),
-        egui::Align2::LEFT_BOTTOM, hint,
-        egui::FontId::proportional(9.0), egui::Color32::from_gray(140),
+        egui::Align2::LEFT_BOTTOM,
+        hint,
+        egui::FontId::proportional(9.0),
+        egui::Color32::from_gray(140),
     );
 }
 
@@ -879,7 +987,8 @@ fn draw_graph_content(
 fn draw_panel_background(painter: &egui::Painter, rect: egui::Rect) {
     painter.rect_filled(rect, 8.0, egui::Color32::from_rgb(249, 251, 254));
     painter.rect_stroke(
-        rect, 8.0,
+        rect,
+        8.0,
         egui::Stroke::new(1.0, egui::Color32::from_rgb(214, 220, 228)),
         egui::StrokeKind::Outside,
     );
@@ -890,10 +999,22 @@ fn draw_fullscreen_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::
     let l = 5.0_f32;
     let stroke = egui::Stroke::new(1.5, color);
     let corners = [
-        (rect.left_top(),     egui::vec2(1.0, 0.0),  egui::vec2(0.0, 1.0)),
-        (rect.right_top(),    egui::vec2(-1.0, 0.0), egui::vec2(0.0, 1.0)),
-        (rect.left_bottom(),  egui::vec2(1.0, 0.0),  egui::vec2(0.0, -1.0)),
-        (rect.right_bottom(), egui::vec2(-1.0, 0.0), egui::vec2(0.0, -1.0)),
+        (rect.left_top(), egui::vec2(1.0, 0.0), egui::vec2(0.0, 1.0)),
+        (
+            rect.right_top(),
+            egui::vec2(-1.0, 0.0),
+            egui::vec2(0.0, 1.0),
+        ),
+        (
+            rect.left_bottom(),
+            egui::vec2(1.0, 0.0),
+            egui::vec2(0.0, -1.0),
+        ),
+        (
+            rect.right_bottom(),
+            egui::vec2(-1.0, 0.0),
+            egui::vec2(0.0, -1.0),
+        ),
     ];
     for (corner, dx, dy) in corners {
         let o = corner + (dx + dy) * m;
@@ -902,12 +1023,7 @@ fn draw_fullscreen_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::
     }
 }
 
-fn draw_bezier_edge(
-    painter: &egui::Painter,
-    sp: &[egui::Pos2],
-    color: egui::Color32,
-    width: f32,
-) {
+fn draw_bezier_edge(painter: &egui::Painter, sp: &[egui::Pos2], color: egui::Color32, width: f32) {
     if sp.len() >= 4 {
         let mut i = 0;
         while i + 3 < sp.len() {
@@ -935,13 +1051,20 @@ fn draw_bezier_edge(
             let back = tip - dir * 9.0;
             painter.add(egui::Shape::convex_polygon(
                 vec![tip, back + perp * 4.5, back - perp * 4.5],
-                color, egui::Stroke::NONE,
+                color,
+                egui::Stroke::NONE,
             ));
         }
     }
 }
 
-fn to_screen(x: f32, y: f32, rect: egui::Rect, layout: &LayoutedGraph, view: &GraphViewState) -> egui::Pos2 {
+fn to_screen(
+    x: f32,
+    y: f32,
+    rect: egui::Rect,
+    layout: &LayoutedGraph,
+    view: &GraphViewState,
+) -> egui::Pos2 {
     let base_left = rect.center().x - layout.width_in * DPI * 0.5;
     let base_bottom = rect.center().y + layout.height_in * DPI * 0.5;
     let base = egui::pos2(base_left + x * DPI, base_bottom - y * DPI);
@@ -980,8 +1103,7 @@ pub fn render_ros_graph_selectable(
     selected_topic: Option<&str>,
 ) -> Option<String> {
     let desired_size = egui::vec2(ui.available_width(), ui.available_height().max(200.0));
-    let (rect, response) =
-        ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
 
     let painter = ui.painter_at(rect);
     draw_panel_background(&painter, rect);
@@ -1010,9 +1132,12 @@ pub fn render_ros_graph_selectable(
 
     let view_id = egui::Id::new("topic_monitor_graph_view");
     let fit_zoom = compute_fit_zoom(layout, rect);
-    let mut view: GraphViewState = ui
-        .data(|d| d.get_temp(view_id))
-        .unwrap_or_else(|| GraphViewState { zoom: fit_zoom, pan: egui::Vec2::ZERO });
+    let mut view: GraphViewState =
+        ui.data(|d| d.get_temp(view_id))
+            .unwrap_or_else(|| GraphViewState {
+                zoom: fit_zoom,
+                pan: egui::Vec2::ZERO,
+            });
 
     handle_view_input(ui, &response, rect, &mut view, fit_zoom);
     draw_graph_content(&painter, rect, layout, &view);
@@ -1058,7 +1183,9 @@ fn clip_text(painter: &egui::Painter, text: &str, max_width: f32, font_size: f32
     let font = egui::FontId::proportional(font_size);
     let measure = |s: &str| -> f32 {
         painter.ctx().fonts(|f| {
-            f.layout_no_wrap(s.to_string(), font.clone(), egui::Color32::BLACK).size().x
+            f.layout_no_wrap(s.to_string(), font.clone(), egui::Color32::BLACK)
+                .size()
+                .x
         })
     };
 
@@ -1075,13 +1202,21 @@ fn clip_text(painter: &egui::Painter, text: &str, max_width: f32, font_size: f32
                 return cur.to_string();
             }
         } else {
-            if measure(rest) <= max_width { return rest.to_string(); }
+            if measure(rest) <= max_width {
+                return rest.to_string();
+            }
             break;
         }
     }
 
     let budget = (max_width - measure("...")).max(0.0);
-    for &end in text.char_indices().map(|(i, _)| i).collect::<Vec<_>>().iter().rev() {
+    for &end in text
+        .char_indices()
+        .map(|(i, _)| i)
+        .collect::<Vec<_>>()
+        .iter()
+        .rev()
+    {
         if measure(&text[..end]) <= budget {
             return format!("{}...", &text[..end]);
         }

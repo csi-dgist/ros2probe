@@ -11,7 +11,8 @@ use which::which;
 /// which would likely mean far too much cache invalidation.
 ///
 /// [bindeps]: https://doc.rust-lang.org/nightly/cargo/reference/unstable.html?highlight=feature#artifact-dependencies
-fn main() {
-    let bpf_linker = which("bpf-linker").unwrap();
-    println!("cargo:rerun-if-changed={}", bpf_linker.to_str().unwrap());
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let bpf_linker = which("bpf-linker")?;
+    println!("cargo:rerun-if-changed={}", bpf_linker.display());
+    Ok(())
 }

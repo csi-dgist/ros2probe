@@ -15,10 +15,13 @@ pub type SharedState = Arc<ArcSwap<CommandState>>;
 
 use crate::{
     command::protocol::{
-        ActionDetails, ActionInfo, NodeDetails, NodeEndpointSummary, NodeInfo, NodeServiceInfo,
-        ServiceInfo, TopicDetails, TopicEndpointInfo, TopicInfo,
+        ActionDetails, ActionInfo, MiddlewareStatus, NodeDetails, NodeEndpointSummary, NodeInfo,
+        NodeServiceInfo, ServiceInfo, TopicDetails, TopicEndpointInfo, TopicInfo,
     },
-    discovery::{DiscoveryTable, DurationValue, EndpointEntry, Locator, NodeEntry, NodeTable, TopicView},
+    discovery::{
+        DiscoveryTable, DurationValue, EndpointEntry, Locator, Middleware, NodeEntry, NodeTable,
+        ParticipantId, TopicView,
+    },
 };
 
 // ── Local-only endpoint detection ────────────────────────────────────────────
@@ -67,6 +70,7 @@ pub struct CommandState {
     pub services: Vec<ServiceInfo>,
     pub topics: Vec<TopicInfo>,
     pub topic_details: Vec<TopicDetails>,
+    pub middleware: MiddlewareStatus,
 }
 
 pub fn shared_state() -> SharedState {
@@ -77,9 +81,12 @@ pub fn refresh_from_discovery(
     state: &SharedState,
     discovery_table: &DiscoveryTable,
     node_table: &NodeTable,
-    remote_participants: &Arc<Mutex<HashSet<TopicGid>>>,
+    remote_participants: &Arc<Mutex<HashSet<ParticipantId>>>,
 ) {
-    let rp = remote_participants.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let rp = remote_participants
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let topic_views = discovery_table.topics();
     let nodes = node_table
         .nodes()
@@ -94,7 +101,11 @@ pub fn refresh_from_discovery(
         .into_iter()
         .filter_map(|topic| topic_details_from_view(discovery_table, node_table, topic, &rp))
         .collect::<Vec<_>>();
-    let topics = topic_details.iter().map(topic_info_from_details).collect::<Vec<_>>();
+    let topics = topic_details
+        .iter()
+        .map(topic_info_from_details)
+        .collect::<Vec<_>>();
+    let middleware = middleware_status_from_discovery(discovery_table, node_table);
     // Build the new snapshot locally, then publish atomically. Concurrent
     // readers that loaded the old Arc continue to hold it until they drop.
     state.store(Arc::new(CommandState {
@@ -105,7 +116,46 @@ pub fn refresh_from_discovery(
         services,
         topics,
         topic_details,
+        middleware,
     }));
+}
+
+pub fn middleware_status_from_discovery(
+    discovery_table: &DiscoveryTable,
+    node_table: &NodeTable,
+) -> MiddlewareStatus {
+    let mut status = MiddlewareStatus::default();
+
+    for endpoint in discovery_table
+        .publications()
+        .values()
+        .chain(discovery_table.subscriptions().values())
+    {
+        mark_middleware(&mut status, endpoint.endpoint_id.middleware());
+        if let Some(participant_id) = &endpoint.participant_id {
+            mark_middleware(&mut status, participant_id.middleware());
+        }
+    }
+
+    for node in node_table.nodes().values() {
+        mark_middleware(&mut status, node.participant_id.middleware());
+        for endpoint_id in node
+            .writer_endpoint_ids
+            .iter()
+            .chain(&node.reader_endpoint_ids)
+        {
+            mark_middleware(&mut status, endpoint_id.middleware());
+        }
+    }
+
+    status
+}
+
+fn mark_middleware(status: &mut MiddlewareStatus, middleware: Middleware) {
+    match middleware {
+        Middleware::Rtps => status.dds = true,
+        Middleware::Zenoh => status.zenoh = true,
+    }
 }
 
 fn node_info_from_entry(node: &NodeEntry) -> NodeInfo {
@@ -137,79 +187,141 @@ fn topic_details_from_view(
     discovery_table: &DiscoveryTable,
     node_table: &NodeTable,
     topic: TopicView,
-    remote_participants: &HashSet<TopicGid>,
+    remote_participants: &HashSet<ParticipantId>,
 ) -> Option<TopicDetails> {
     if topic.topic_name.starts_with("rq/") || topic.topic_name.starts_with("rr/") {
         return None;
     }
     let name = normalize_topic_name(&topic.topic_name)?;
     let publishers = topic
-        .publisher_gids
+        .publisher_ids
         .iter()
-        .filter_map(|gid| {
-            let endpoint = discovery_table.publication(gid)?;
-            let participant_locators = endpoint.participant_gid
+        .filter_map(|id| {
+            let endpoint = discovery_table.publication_by_id(id)?;
+            let type_name = endpoint
+                .type_name
+                .as_deref()
+                .map(normalize_type_name)
+                .unwrap_or_else(|| String::from("-"));
+            if !is_topic_endpoint(&name, &type_name, false) {
+                return None;
+            }
+            let participant_locators = endpoint
+                .participant_gid
                 .and_then(|pgid| discovery_table.participant(&pgid))
                 .map(|p| p.default_unicast_locators.as_slice())
                 .unwrap_or(&[]);
             let mut info = publication_endpoint_info(node_table, endpoint, participant_locators);
             // Endpoint is local if its participant has not been seen from a remote IP.
-            info.local_only = endpoint.participant_gid
-                .map_or(true, |pgid| !remote_participants.contains(&pgid));
+            info.local_only = endpoint
+                .participant_id
+                .as_ref()
+                .map_or(true, |id| !remote_participants.contains(id));
             Some(info)
         })
         .collect::<Vec<_>>();
     let subscriptions = topic
-        .subscription_gids
+        .subscription_ids
         .iter()
-        .filter_map(|gid| {
-            let endpoint = discovery_table.subscription(gid)?;
-            let participant_locators = endpoint.participant_gid
+        .filter_map(|id| {
+            let endpoint = discovery_table.subscription_by_id(id)?;
+            let type_name = endpoint
+                .type_name
+                .as_deref()
+                .map(normalize_type_name)
+                .unwrap_or_else(|| String::from("-"));
+            if !is_topic_endpoint(&name, &type_name, true) {
+                return None;
+            }
+            let participant_locators = endpoint
+                .participant_gid
                 .and_then(|pgid| discovery_table.participant(&pgid))
                 .map(|p| p.default_unicast_locators.as_slice())
                 .unwrap_or(&[]);
-            Some(subscription_endpoint_info(node_table, endpoint, participant_locators))
+            Some(subscription_endpoint_info(
+                node_table,
+                endpoint,
+                participant_locators,
+            ))
         })
+        .collect::<Vec<_>>();
+
+    if publishers.is_empty() && subscriptions.is_empty() {
+        return None;
+    }
+
+    let type_names = publishers
+        .iter()
+        .chain(subscriptions.iter())
+        .filter_map(|endpoint| endpoint.topic_type.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect::<Vec<_>>();
 
     // local_only: no participant on either side (publisher or subscriber) was seen
     // from a remote IP. If any remote participant exists, network traffic must be
     // present and the topic is recordable.
-    let local_only = !topic.publisher_gids.iter().any(|gid| {
-        discovery_table.publication(gid)
-            .and_then(|e| e.participant_gid)
-            .map_or(false, |pgid| remote_participants.contains(&pgid))
-    }) && !topic.subscription_gids.iter().any(|gid| {
-        discovery_table.subscription(gid)
-            .and_then(|e| e.participant_gid)
-            .map_or(false, |pgid| remote_participants.contains(&pgid))
+    let local_only = !topic.publisher_ids.iter().any(|id| {
+        discovery_table
+            .publication_by_id(id)
+            .filter(|endpoint| {
+                let type_name = endpoint
+                    .type_name
+                    .as_deref()
+                    .map(normalize_type_name)
+                    .unwrap_or_else(|| String::from("-"));
+                is_topic_endpoint(&name, &type_name, false)
+            })
+            .and_then(|e| e.participant_id.as_ref())
+            .is_some_and(|id| remote_participants.contains(id))
+    }) && !topic.subscription_ids.iter().any(|id| {
+        discovery_table
+            .subscription_by_id(id)
+            .filter(|endpoint| {
+                let type_name = endpoint
+                    .type_name
+                    .as_deref()
+                    .map(normalize_type_name)
+                    .unwrap_or_else(|| String::from("-"));
+                is_topic_endpoint(&name, &type_name, true)
+            })
+            .and_then(|e| e.participant_id.as_ref())
+            .is_some_and(|id| remote_participants.contains(id))
     });
+
+    let publisher_count = publishers.len();
+    let subscription_count = subscriptions.len();
 
     Some(TopicDetails {
         name,
-        type_names: topic
-            .type_names
-            .into_iter()
-            .map(|type_name| normalize_type_name(&type_name))
-            .collect(),
-        publisher_count: topic.publisher_count,
-        subscription_count: topic.subscription_count,
+        type_names,
+        publisher_count,
+        subscription_count,
         publishers,
         subscriptions,
         local_only,
     })
 }
 
-fn build_node_details(discovery_table: &DiscoveryTable, node_table: &NodeTable) -> Vec<NodeDetails> {
+fn is_topic_endpoint(topic_name: &str, type_name: &str, is_reader: bool) -> bool {
+    classify_action_endpoint(topic_name, type_name, is_reader).is_none()
+        && classify_service_endpoint(topic_name, type_name, is_reader).is_none()
+}
+
+fn build_node_details(
+    discovery_table: &DiscoveryTable,
+    node_table: &NodeTable,
+) -> Vec<NodeDetails> {
     let mut by_node = BTreeMap::<(String, String), NodeDetailsAccumulator>::new();
 
     for node in node_table.nodes().values() {
         let key = (node.key.node_namespace.clone(), node.key.node_name.clone());
         let acc = by_node.entry(key).or_default();
 
-        for gid in &node.reader_gids {
-            if let Some(endpoint) = discovery_table.subscription(gid) {
-                let Some(name) = normalize_topic_name(endpoint.topic_name.as_deref().unwrap_or("")) else {
+        for id in &node.reader_endpoint_ids {
+            if let Some(endpoint) = discovery_table.subscription_by_id(id) {
+                let Some(name) = normalize_topic_name(endpoint.topic_name.as_deref().unwrap_or(""))
+                else {
                     continue;
                 };
                 let type_name = endpoint
@@ -237,9 +349,10 @@ fn build_node_details(discovery_table: &DiscoveryTable, node_table: &NodeTable) 
             }
         }
 
-        for gid in &node.writer_gids {
-            if let Some(endpoint) = discovery_table.publication(gid) {
-                let Some(name) = normalize_topic_name(endpoint.topic_name.as_deref().unwrap_or("")) else {
+        for id in &node.writer_endpoint_ids {
+            if let Some(endpoint) = discovery_table.publication_by_id(id) {
+                let Some(name) = normalize_topic_name(endpoint.topic_name.as_deref().unwrap_or(""))
+                else {
                     continue;
                 };
                 let type_name = endpoint
@@ -377,7 +490,10 @@ fn collect_action_detail(
     let Some(node) = endpoint_node(node_table, endpoint, is_reader) else {
         return;
     };
-    let node_name = full_node_name(node.key.node_namespace.as_str(), node.key.node_name.as_str());
+    let node_name = full_node_name(
+        node.key.node_namespace.as_str(),
+        node.key.node_name.as_str(),
+    );
     match role {
         ActionRole::Client => {
             acc.clients.insert(node_name);
@@ -415,7 +531,12 @@ fn publication_endpoint_info(
     endpoint: &EndpointEntry,
     participant_locators: &[Locator],
 ) -> TopicEndpointInfo {
-    endpoint_info(endpoint, "PUBLISHER", endpoint_node(node_table, endpoint, false), participant_locators)
+    endpoint_info(
+        endpoint,
+        "PUBLISHER",
+        endpoint_node(node_table, endpoint, false),
+        participant_locators,
+    )
 }
 
 fn subscription_endpoint_info(
@@ -423,7 +544,12 @@ fn subscription_endpoint_info(
     endpoint: &EndpointEntry,
     participant_locators: &[Locator],
 ) -> TopicEndpointInfo {
-    endpoint_info(endpoint, "SUBSCRIPTION", endpoint_node(node_table, endpoint, true), participant_locators)
+    endpoint_info(
+        endpoint,
+        "SUBSCRIPTION",
+        endpoint_node(node_table, endpoint, true),
+        participant_locators,
+    )
 }
 
 fn endpoint_info(
@@ -439,19 +565,22 @@ fn endpoint_info(
         &endpoint.unicast_locators
     };
     TopicEndpointInfo {
-        gid: format_gid(&endpoint.endpoint_gid),
+        gid: endpoint
+            .endpoint_gid
+            .as_ref()
+            .map(format_gid)
+            .unwrap_or_else(|| format!("{:?}", endpoint.endpoint_id)),
         node_name: node.map(|node| node.key.node_name.clone()),
         node_namespace: node.map(|node| node.key.node_namespace.clone()),
         topic_type: endpoint.type_name.as_deref().map(normalize_type_name),
         endpoint_type: endpoint_type.to_string(),
         reliability: endpoint.reliability.map(format_reliability),
+        history: endpoint.history.map(format_history),
         durability: endpoint.durability.map(format_durability),
         deadline: endpoint.deadline.map(format_duration),
         lifespan: endpoint.lifespan.map(format_duration),
         liveliness: endpoint.liveliness.map(format_liveliness),
-        liveliness_lease_duration: endpoint
-            .liveliness
-            .map(|qos| format_duration(qos.lease_duration)),
+        liveliness_lease_duration: endpoint.liveliness_lease_duration.map(format_duration),
         shm: is_local_endpoint(effective_locators),
         local_only: false, // overridden by caller for publisher endpoints
     }
@@ -463,16 +592,37 @@ fn endpoint_node<'a>(
     is_reader: bool,
 ) -> Option<&'a NodeEntry> {
     let direct = if is_reader {
-        node_table.node_for_reader(&endpoint.endpoint_gid)
+        node_table
+            .node_for_reader_id(&endpoint.endpoint_id)
+            .or_else(|| {
+                endpoint
+                    .endpoint_gid
+                    .as_ref()
+                    .and_then(|gid| node_table.node_for_reader(gid))
+            })
     } else {
-        node_table.node_for_writer(&endpoint.endpoint_gid)
+        node_table
+            .node_for_writer_id(&endpoint.endpoint_id)
+            .or_else(|| {
+                endpoint
+                    .endpoint_gid
+                    .as_ref()
+                    .and_then(|gid| node_table.node_for_writer(gid))
+            })
     };
     if direct.is_some() {
         return direct;
     }
 
-    let participant_gid = endpoint.participant_gid?;
-    let nodes = node_table.nodes_for_participant(&participant_gid);
+    let nodes = endpoint
+        .participant_id
+        .as_ref()
+        .map(|id| node_table.nodes_for_participant_id(id))
+        .or_else(|| {
+            endpoint
+                .participant_gid
+                .map(|gid| node_table.nodes_for_participant(&gid))
+        })?;
     if nodes.len() == 1 {
         return nodes.into_iter().next();
     }
@@ -529,6 +679,14 @@ fn format_gid(gid: &TopicGid) -> String {
         .join(".")
 }
 
+fn format_history(qos: crate::discovery::HistoryQos) -> String {
+    match qos.kind {
+        1 => format!("KEEP_LAST ({})", qos.depth),
+        2 => String::from("KEEP_ALL"),
+        kind => format!("UNKNOWN ({kind})"),
+    }
+}
+
 fn format_reliability(qos: crate::discovery::ReliabilityQos) -> String {
     match qos.kind {
         1 => String::from("BEST_EFFORT"),
@@ -557,9 +715,7 @@ fn format_liveliness(qos: crate::discovery::LivelinessQos) -> String {
 }
 
 fn format_duration(value: DurationValue) -> String {
-    if value.seconds < 0
-        || (value.seconds == i32::MAX && value.fraction == u32::MAX)
-    {
+    if value.seconds < 0 || (value.seconds == i32::MAX && value.fraction == u32::MAX) {
         String::from("Infinite")
     } else if value.fraction == 0 {
         format!("{}s", value.seconds)
@@ -567,7 +723,6 @@ fn format_duration(value: DurationValue) -> String {
         format!("{}.{:09}s", value.seconds, value.fraction)
     }
 }
-
 
 #[derive(Default)]
 struct NodeDetailsAccumulator {
@@ -605,6 +760,13 @@ fn classify_service_endpoint(
         (stripped.to_string(), true)
     } else if let Some(stripped) = type_name.strip_suffix("_Response") {
         (stripped.to_string(), false)
+    } else if type_name.contains("/srv/") {
+        let role = if is_reader {
+            ServiceRole::Server
+        } else {
+            ServiceRole::Client
+        };
+        return Some((topic_name.to_string(), type_name.to_string(), role));
     } else {
         return None;
     };
@@ -716,4 +878,147 @@ fn normalize_action_type(type_name: &str) -> Option<String> {
     }
 
     Some(type_name.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashSet,
+        sync::{Arc, Mutex},
+        time::SystemTime,
+    };
+
+    use crate::discovery::{
+        DiscoveredEndpoint, DiscoveredParticipant, DiscoverySample, NodeSample,
+    };
+
+    use super::*;
+
+    #[test]
+    fn zenoh_base_service_type_is_service_not_topic() {
+        let participant_gid = gid(1);
+        let service_gid = gid(2);
+        let mut discovery_table = DiscoveryTable::default();
+        let mut node_table = NodeTable::default();
+        let observed_at = SystemTime::UNIX_EPOCH;
+
+        discovery_table.apply_sample(
+            DiscoverySample::Participant(DiscoveredParticipant {
+                guid: Some(participant_gid),
+                ..DiscoveredParticipant::default()
+            }),
+            observed_at,
+        );
+        discovery_table.apply_sample(
+            DiscoverySample::Subscription(DiscoveredEndpoint {
+                endpoint_gid: Some(service_gid),
+                participant_gid: Some(participant_gid),
+                topic_name: Some("/talker/describe_parameters".to_string()),
+                type_name: Some("rcl_interfaces::srv::dds_::DescribeParameters_".to_string()),
+                ..DiscoveredEndpoint::default()
+            }),
+            observed_at,
+        );
+        node_table.upsert_sample(
+            NodeSample {
+                participant_gid: Some(participant_gid),
+                participant_id: None,
+                node_namespace: "/".to_string(),
+                node_name: "talker".to_string(),
+                writer_gids: Vec::new(),
+                reader_gids: vec![service_gid],
+                writer_endpoint_ids: Vec::new(),
+                reader_endpoint_ids: Vec::new(),
+            },
+            observed_at,
+        );
+
+        let state = build_state(discovery_table, node_table);
+
+        assert!(state.topic_details.is_empty());
+        assert_eq!(state.services.len(), 1);
+        assert_eq!(state.services[0].name, "/talker/describe_parameters");
+        assert_eq!(
+            state.services[0].type_name,
+            "rcl_interfaces/srv/DescribeParameters"
+        );
+        assert_eq!(state.node_details.len(), 1);
+        assert!(state.node_details[0].publishers.is_empty());
+        assert!(state.node_details[0].subscribers.is_empty());
+        assert_eq!(state.node_details[0].service_servers.len(), 1);
+        assert_eq!(
+            state.node_details[0].service_servers[0].name,
+            "/talker/describe_parameters"
+        );
+    }
+
+    #[test]
+    fn action_endpoint_is_action_not_topic() {
+        let participant_gid = gid(3);
+        let action_gid = gid(4);
+        let mut discovery_table = DiscoveryTable::default();
+        let mut node_table = NodeTable::default();
+        let observed_at = SystemTime::UNIX_EPOCH;
+
+        discovery_table.apply_sample(
+            DiscoverySample::Participant(DiscoveredParticipant {
+                guid: Some(participant_gid),
+                ..DiscoveredParticipant::default()
+            }),
+            observed_at,
+        );
+        discovery_table.apply_sample(
+            DiscoverySample::Publication(DiscoveredEndpoint {
+                endpoint_gid: Some(action_gid),
+                participant_gid: Some(participant_gid),
+                topic_name: Some("/navigate/_action/feedback".to_string()),
+                type_name: Some(
+                    "nav2_msgs::action::dds_::NavigateToPose_FeedbackMessage_".to_string(),
+                ),
+                ..DiscoveredEndpoint::default()
+            }),
+            observed_at,
+        );
+        node_table.upsert_sample(
+            NodeSample {
+                participant_gid: Some(participant_gid),
+                participant_id: None,
+                node_namespace: "/".to_string(),
+                node_name: "navigator".to_string(),
+                writer_gids: vec![action_gid],
+                reader_gids: Vec::new(),
+                writer_endpoint_ids: Vec::new(),
+                reader_endpoint_ids: Vec::new(),
+            },
+            observed_at,
+        );
+
+        let state = build_state(discovery_table, node_table);
+
+        assert!(state.topic_details.is_empty());
+        assert_eq!(state.actions.len(), 1);
+        assert_eq!(state.actions[0].name, "/navigate");
+        assert_eq!(
+            state.actions[0].type_name.as_deref(),
+            Some("nav2_msgs/action/NavigateToPose")
+        );
+        assert_eq!(state.action_details.len(), 1);
+        assert_eq!(state.action_details[0].servers, vec!["/navigator"]);
+        assert!(state.node_details[0].publishers.is_empty());
+    }
+
+    fn build_state(discovery_table: DiscoveryTable, node_table: NodeTable) -> CommandState {
+        let state = shared_state();
+        refresh_from_discovery(
+            &state,
+            &discovery_table,
+            &node_table,
+            &Arc::new(Mutex::new(HashSet::new())),
+        );
+        state.load_full().as_ref().clone()
+    }
+
+    fn gid(value: u8) -> TopicGid {
+        TopicGid::new([value; 16])
+    }
 }

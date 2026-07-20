@@ -79,7 +79,12 @@ impl TopicGid {
     }
 
     pub const fn writer_entity_id(&self) -> [u8; 4] {
-        [self.bytes[12], self.bytes[13], self.bytes[14], self.bytes[15]]
+        [
+            self.bytes[12],
+            self.bytes[13],
+            self.bytes[14],
+            self.bytes[15],
+        ]
     }
 }
 

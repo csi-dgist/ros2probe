@@ -73,6 +73,10 @@ impl RecorderTopicGidMap {
         self.mode = GidMapMode::None;
     }
 
+    pub fn configure_mode(&mut self, mode: GidMapMode) {
+        self.mode = mode;
+    }
+
     pub fn mode(&self) -> &GidMapMode {
         &self.mode
     }
@@ -111,7 +115,10 @@ impl RecorderTopicGidMap {
         self.current.contains_key(gid)
     }
 
-    pub fn rebuild_from_table(&mut self, table: &DiscoveryTable) -> anyhow::Result<GidMapSyncStats> {
+    pub fn rebuild_from_table(
+        &mut self,
+        table: &DiscoveryTable,
+    ) -> anyhow::Result<GidMapSyncStats> {
         let next = self.select_from_table(table);
         if next.len() > MAX_TOPIC_GIDS as usize {
             bail!(
@@ -134,21 +141,28 @@ impl RecorderTopicGidMap {
         Ok(())
     }
 
-    fn select_from_table(&self, table: &DiscoveryTable) -> BTreeMap<TopicGid, RecorderTopicMetadata> {
+    fn select_from_table(
+        &self,
+        table: &DiscoveryTable,
+    ) -> BTreeMap<TopicGid, RecorderTopicMetadata> {
         let mut selected = table
             .publications()
             .iter()
-            .filter_map(|(gid, endpoint)| {
+            .filter_map(|(id, endpoint)| {
+                let gid = id.rtps_gid()?;
                 let topic_name = endpoint.topic_name.as_ref()?;
                 let normalized_topic_name = normalize_topic_name(topic_name);
                 if !self.matches_topic(&normalized_topic_name) {
                     return None;
                 }
-                Some((*gid, build_metadata(endpoint, &normalized_topic_name)))
+                Some((gid, build_metadata(endpoint, &normalized_topic_name)))
             })
             .collect::<BTreeMap<_, _>>();
 
-        for (gid, endpoint) in table.subscriptions() {
+        for (id, endpoint) in table.subscriptions() {
+            let Some(gid) = id.rtps_gid() else {
+                continue;
+            };
             let Some(topic_name) = endpoint.topic_name.as_ref() else {
                 continue;
             };
@@ -156,7 +170,7 @@ impl RecorderTopicGidMap {
             if normalized_topic_name != ROS_DISCOVERY_INFO_TOPIC {
                 continue;
             }
-            selected.insert(*gid, build_metadata(endpoint, &normalized_topic_name));
+            selected.insert(gid, build_metadata(endpoint, &normalized_topic_name));
         }
 
         selected
@@ -174,7 +188,10 @@ impl RecorderTopicGidMap {
         }
     }
 
-    fn sync(&mut self, next: BTreeMap<TopicGid, RecorderTopicMetadata>) -> anyhow::Result<GidMapSyncStats> {
+    fn sync(
+        &mut self,
+        next: BTreeMap<TopicGid, RecorderTopicMetadata>,
+    ) -> anyhow::Result<GidMapSyncStats> {
         let mut stats = GidMapSyncStats::default();
 
         let removed = self

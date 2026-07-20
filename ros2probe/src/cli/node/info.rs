@@ -34,7 +34,10 @@ pub fn run(args: NodeInfoCommand) -> anyhow::Result<()> {
 }
 
 fn print_node_info(node: &NodeDetails) {
-    println!("{}", full_node_name(node.namespace.as_str(), node.name.as_str()));
+    println!(
+        "{}",
+        full_node_name(node.namespace.as_str(), node.name.as_str())
+    );
     println!("  Subscribers:");
     for endpoint in &node.subscribers {
         print_endpoint_summary(endpoint);

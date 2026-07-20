@@ -1,6 +1,8 @@
 use anyhow::{Context as _, anyhow};
 use aya_build::Toolchain;
 
+const EBPF_FEATURES: &[&str] = &["ebpf-bin"];
+
 fn main() -> anyhow::Result<()> {
     let cargo_metadata::Metadata { packages, .. } = cargo_metadata::MetadataCommand::new()
         .no_deps()
@@ -21,6 +23,7 @@ fn main() -> anyhow::Result<()> {
             .parent()
             .ok_or_else(|| anyhow!("no parent for {manifest_path}"))?
             .as_str(),
+        features: EBPF_FEATURES,
         ..Default::default()
     };
     aya_build::build_ebpf([ebpf_package], Toolchain::default())

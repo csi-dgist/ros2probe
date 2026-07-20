@@ -29,6 +29,18 @@ libc = { version = "0.2.159", default-features = false }
 log = { version = "0.4.22", default-features = false }
 tokio = { version = "1.40.0", default-features = false }
 which = { version = "6.0.0", default-features = false }
+zenoh-buffers = { version = "1.9.0", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main" }
+zenoh-codec = { version = "1.9.0", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main" }
+zenoh = { version = "1.9.0", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main", features = [
+    "shared-memory",
+] }
+zenoh-protocol = { version = "1.9.0", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main", features = [
+    "shared-memory",
+] }
+zenoh-transport = { version = "1.9.0", git = "https://github.com/eclipse-zenoh/zenoh.git", branch = "main", features = [
+    "shared-memory",
+    "transport_compression",
+] }
 
 [profile.release.package.ros2probe-ebpf]
 debug = 2

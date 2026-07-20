@@ -269,6 +269,8 @@ pub struct TopicGraphRequest {
 pub struct TopicGraphResponse {
     pub topics: Vec<TopicDetails>,
     pub nodes: Vec<NodeDetails>,
+    #[serde(default)]
+    pub middleware: MiddlewareStatus,
     /// Unfiltered counts for the dashboard headline.
     #[serde(default)]
     pub total_topics_count: usize,
@@ -278,6 +280,14 @@ pub struct TopicGraphResponse {
     pub total_actions_count: usize,
     #[serde(default)]
     pub total_services_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MiddlewareStatus {
+    #[serde(default)]
+    pub dds: bool,
+    #[serde(default)]
+    pub zenoh: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -317,6 +327,8 @@ pub struct TopicDelayStatusResponse {
     pub stats: Option<TopicDelayStats>,
     #[serde(default)]
     pub missing_header: bool,
+    #[serde(default)]
+    pub clock_mismatch: bool,
     #[serde(default)]
     pub messages: Vec<TopicDelayMessage>,
 }
@@ -380,6 +392,8 @@ pub struct TopicHzBwStatusResponse {
     pub hz: TopicHzStatusResponse,
     pub bw: TopicBwStatusResponse,
     pub delay: Option<TopicDelayStats>,
+    #[serde(default)]
+    pub delay_clock_mismatch: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -543,6 +557,7 @@ pub struct TopicEndpointInfo {
     pub topic_type: Option<String>,
     pub endpoint_type: String,
     pub reliability: Option<String>,
+    pub history: Option<String>,
     pub durability: Option<String>,
     pub deadline: Option<String>,
     pub lifespan: Option<String>,
@@ -556,12 +571,50 @@ pub struct TopicEndpointInfo {
     pub local_only: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiscoverMode {
+    #[default]
+    Auto,
+    Rtps,
+    Zenoh,
+    All,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct DiscoverRequest;
+pub struct DiscoverRequest {
+    #[serde(default)]
+    pub mode: DiscoverMode,
+    #[serde(default)]
+    pub ros_domain_id: Option<String>,
+}
+
+impl DiscoverRequest {
+    pub fn from_current_env(mode: DiscoverMode) -> Self {
+        Self {
+            mode,
+            ros_domain_id: nonempty_env("ROS_DOMAIN_ID"),
+        }
+    }
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DiscoverResponse {
     pub triggered: bool,
+    #[serde(default)]
+    pub rtps_triggered: bool,
+    #[serde(default)]
+    pub zenoh_triggered: bool,
+    #[serde(default)]
+    pub zenoh_tokens: usize,
+    #[serde(default)]
+    pub messages: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

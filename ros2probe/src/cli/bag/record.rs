@@ -7,11 +7,9 @@ use anyhow::{Context, bail};
 use clap::Args;
 use tokio::runtime::Runtime;
 
-use crate::command::{
-    protocol::{
-        BagLostMessages, BagRecordRequest, BagSetPausedRequest, BagStopRequest, CommandRequest,
-        CommandResponse, CompressionFormat,
-    },
+use crate::command::protocol::{
+    BagLostMessages, BagRecordRequest, BagSetPausedRequest, BagStopRequest, CommandRequest,
+    CommandResponse, CompressionFormat,
 };
 
 use super::util::{info_log, send_request, warn_log};
@@ -169,10 +167,7 @@ fn print_lost_message_warning(lost_messages: &[BagLostMessages]) {
         return;
     }
 
-    let total = lost_messages
-        .iter()
-        .map(|lost| lost.count)
-        .sum::<usize>();
+    let total = lost_messages.iter().map(|lost| lost.count).sum::<usize>();
     let mut message = String::from("Cache buffers lost messages per topic: ");
     for lost in lost_messages {
         message.push_str(&format!("\n\t{}: {}", lost.topic_name, lost.count));

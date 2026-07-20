@@ -121,7 +121,10 @@ impl BagRecorderPage {
                     self.session = session;
                     self.error = None;
                 }
-                RecorderEvent::TopicsUpdated { recordable, internal } => {
+                RecorderEvent::TopicsUpdated {
+                    recordable,
+                    internal,
+                } => {
                     self.available_topics = recordable;
                     self.internal_topics = internal;
                 }
@@ -182,8 +185,7 @@ impl BagRecorderPage {
 
                 if self.available_topics.is_empty() && self.internal_topics.is_empty() {
                     ui.label(
-                        egui::RichText::new("No topics found")
-                            .color(egui::Color32::from_gray(140)),
+                        egui::RichText::new("No topics found").color(egui::Color32::from_gray(140)),
                     );
                     return;
                 }
@@ -191,7 +193,9 @@ impl BagRecorderPage {
                 // "All topics" checkbox — checks/unchecks recordable topics
                 let all_filtered_selected = !filtered_recordable.is_empty()
                     && (self.all_topics
-                        || filtered_recordable.iter().all(|t| self.selected_topics.contains(*t)));
+                        || filtered_recordable
+                            .iter()
+                            .all(|t| self.selected_topics.contains(*t)));
                 let mut all_checked = all_filtered_selected;
                 let all_resp = ui.checkbox(
                     &mut all_checked,
@@ -214,8 +218,7 @@ impl BagRecorderPage {
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for topic in &filtered_recordable {
-                        let mut checked =
-                            self.all_topics || self.selected_topics.contains(*topic);
+                        let mut checked = self.all_topics || self.selected_topics.contains(*topic);
                         let resp = ui.checkbox(
                             &mut checked,
                             egui::RichText::new(*topic).monospace().size(11.0),
@@ -274,7 +277,11 @@ impl BagRecorderPage {
 
     fn render_config_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(PAGE_BG).inner_margin(egui::Margin::same(16)))
+            .frame(
+                egui::Frame::new()
+                    .fill(PAGE_BG)
+                    .inner_margin(egui::Margin::same(16)),
+            )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     // Output path
@@ -284,9 +291,13 @@ impl BagRecorderPage {
                                 .hint_text("Leave blank for auto-generated name")
                                 .desired_width(ui.available_width() - 36.0)
                                 .show(ui);
-                            let folder_btn = egui::Button::new("📂")
-                                .corner_radius(egui::CornerRadius::same(4));
-                            if ui.add_sized([28.0, 22.0], folder_btn).on_hover_text("Browse…").clicked() {
+                            let folder_btn =
+                                egui::Button::new("📂").corner_radius(egui::CornerRadius::same(4));
+                            if ui
+                                .add_sized([28.0, 22.0], folder_btn)
+                                .on_hover_text("Browse…")
+                                .clicked()
+                            {
                                 self.open_file_dialog();
                             }
                         });
@@ -353,15 +364,18 @@ impl BagRecorderPage {
                             .color(egui::Color32::WHITE)
                             .size(14.0),
                     )
-                    .fill(if can_start { REC_RED } else { egui::Color32::from_gray(180) })
+                    .fill(if can_start {
+                        REC_RED
+                    } else {
+                        egui::Color32::from_gray(180)
+                    })
                     .corner_radius(egui::CornerRadius::same(6));
 
                     if ui.add_sized([180.0, 38.0], btn).clicked() && can_start {
                         let topics: Vec<String> = if self.all_topics {
                             Vec::new()
                         } else {
-                            let mut v: Vec<String> =
-                                self.selected_topics.iter().cloned().collect();
+                            let mut v: Vec<String> = self.selected_topics.iter().cloned().collect();
                             v.sort();
                             v
                         };
@@ -396,9 +410,14 @@ impl BagRecorderPage {
     }
 
     fn render_recording_view(&mut self, ctx: &egui::Context) {
-        let Some(session) = self.session.clone() else { return };
+        let Some(session) = self.session.clone() else {
+            return;
+        };
 
-        let elapsed = self.recording_since.map(|t| t.elapsed()).unwrap_or_default();
+        let elapsed = self
+            .recording_since
+            .map(|t| t.elapsed())
+            .unwrap_or_default();
         let elapsed_str = format!(
             "{:02}:{:02}:{:02}",
             elapsed.as_secs() / 3600,
@@ -407,7 +426,11 @@ impl BagRecorderPage {
         );
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(PAGE_BG).inner_margin(egui::Margin::same(16)))
+            .frame(
+                egui::Frame::new()
+                    .fill(PAGE_BG)
+                    .inner_margin(egui::Margin::same(16)),
+            )
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     // Status banner
@@ -475,9 +498,9 @@ impl BagRecorderPage {
                                         .fill(pause_color)
                                         .corner_radius(egui::CornerRadius::same(5));
                                         if ui.add_sized([80.0, 30.0], pause_btn).clicked() {
-                                            let _ = self.cmd_tx.send(RecorderCommand::SetPaused(
-                                                !session.paused,
-                                            ));
+                                            let _ = self
+                                                .cmd_tx
+                                                .send(RecorderCommand::SetPaused(!session.paused));
                                         }
                                     },
                                 );
@@ -497,7 +520,10 @@ impl BagRecorderPage {
                     // Session details
                     egui::Frame::new()
                         .fill(egui::Color32::from_rgb(252, 253, 255))
-                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 217, 226)))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgb(210, 217, 226),
+                        ))
                         .corner_radius(egui::CornerRadius::same(8))
                         .inner_margin(egui::Margin::same(14))
                         .show(ui, |ui| {
@@ -573,7 +599,10 @@ fn compression_label(fmt: CompressionFormat) -> &'static str {
 fn config_card(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(egui::Color32::from_rgb(252, 253, 255))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 217, 226)))
+        .stroke(egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgb(210, 217, 226),
+        ))
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
@@ -584,15 +613,16 @@ fn config_card(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut eg
 }
 
 fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.label(egui::RichText::new(label).size(12.0).color(egui::Color32::from_gray(115)));
+    ui.label(
+        egui::RichText::new(label)
+            .size(12.0)
+            .color(egui::Color32::from_gray(115)),
+    );
     ui.label(egui::RichText::new(value).size(12.0));
     ui.end_row();
 }
 
-fn recorder_worker(
-    cmd_rx: mpsc::Receiver<RecorderCommand>,
-    event_tx: mpsc::Sender<RecorderEvent>,
-) {
+fn recorder_worker(cmd_rx: mpsc::Receiver<RecorderCommand>, event_tx: mpsc::Sender<RecorderEvent>) {
     let poll_interval = Duration::from_millis(1000);
     let topic_refresh_interval = Duration::from_secs(3);
     let mut last_topic_refresh = Instant::now() - topic_refresh_interval;
@@ -600,28 +630,26 @@ fn recorder_worker(
     loop {
         match cmd_rx.recv_timeout(poll_interval) {
             Ok(cmd) => match cmd {
-                RecorderCommand::Start(req) => {
-                    match send_request(CommandRequest::BagRecord(req)) {
-                        Ok(CommandResponse::BagRecord(resp)) => {
-                            let session = BagSessionInfo {
-                                output: resp.output,
-                                paused: resp.paused,
-                                topics: resp.topics,
-                                all_topics: resp.all_topics,
-                                no_discovery: resp.no_discovery,
-                                compression_format: resp.compression_format,
-                            };
-                            let _ = event_tx.send(RecorderEvent::Status(Some(session)));
-                        }
-                        Ok(CommandResponse::Error(e)) => {
-                            let _ = event_tx.send(RecorderEvent::Error(e.message));
-                        }
-                        Err(e) => {
-                            let _ = event_tx.send(RecorderEvent::Error(e.to_string()));
-                        }
-                        _ => {}
+                RecorderCommand::Start(req) => match send_request(CommandRequest::BagRecord(req)) {
+                    Ok(CommandResponse::BagRecord(resp)) => {
+                        let session = BagSessionInfo {
+                            output: resp.output,
+                            paused: resp.paused,
+                            topics: resp.topics,
+                            all_topics: resp.all_topics,
+                            no_discovery: resp.no_discovery,
+                            compression_format: resp.compression_format,
+                        };
+                        let _ = event_tx.send(RecorderEvent::Status(Some(session)));
                     }
-                }
+                    Ok(CommandResponse::Error(e)) => {
+                        let _ = event_tx.send(RecorderEvent::Error(e.message));
+                    }
+                    Err(e) => {
+                        let _ = event_tx.send(RecorderEvent::Error(e.to_string()));
+                    }
+                    _ => {}
+                },
                 RecorderCommand::Stop => {
                     match send_request(CommandRequest::BagStop(BagStopRequest)) {
                         Ok(CommandResponse::BagStop(_)) => {
@@ -634,9 +662,8 @@ fn recorder_worker(
                     }
                 }
                 RecorderCommand::SetPaused(paused) => {
-                    let _ = send_request(CommandRequest::BagSetPaused(BagSetPausedRequest {
-                        paused,
-                    }));
+                    let _ =
+                        send_request(CommandRequest::BagSetPaused(BagSetPausedRequest { paused }));
                 }
             },
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -656,11 +683,8 @@ fn recorder_worker(
         if last_topic_refresh.elapsed() >= topic_refresh_interval {
             if let Ok(graph) = fetch_graph_snapshot() {
                 let all_names: Vec<String> = {
-                    let mut names: Vec<String> = graph
-                        .topics
-                        .iter()
-                        .map(|t| t.name.clone())
-                        .collect();
+                    let mut names: Vec<String> =
+                        graph.topics.iter().map(|t| t.name.clone()).collect();
                     names.sort();
                     names
                 };
@@ -674,7 +698,10 @@ fn recorder_worker(
                     }
                 }
                 if event_tx
-                    .send(RecorderEvent::TopicsUpdated { recordable, internal })
+                    .send(RecorderEvent::TopicsUpdated {
+                        recordable,
+                        internal,
+                    })
                     .is_err()
                 {
                     return;

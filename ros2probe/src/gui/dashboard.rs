@@ -13,13 +13,14 @@ use eframe::egui;
 use crate::{
     client::send_request,
     command::protocol::{
-        CommandRequest, CommandResponse, NodeDetails, TopicDetails, TopicGraphRequest,
+        CommandRequest, CommandResponse, MiddlewareStatus, NodeDetails, TopicDetails,
+        TopicGraphRequest,
     },
 };
 
 use super::ros_graph::{
-    apply_filter, render_graph_filter_bar, render_ros_graph, GraphFilter, LayoutWorker,
-    LayoutedGraph,
+    GraphFilter, LayoutWorker, LayoutedGraph, apply_filter, render_graph_filter_bar,
+    render_ros_graph,
 };
 
 const PAGE_BG: egui::Color32 = egui::Color32::from_rgb(230, 232, 236);
@@ -36,9 +37,16 @@ pub struct DashboardPage {
     start_time: Instant,
     snapshot: DashboardSnapshot,
     connection_status: ConnectionStatus,
-    discover_rx: Option<mpsc::Receiver<bool>>,
-    discover_feedback: Option<(Instant, &'static str)>,
+    discover_rx: Option<mpsc::Receiver<Result<CommandResponse, String>>>,
+    discover_feedback: Option<DiscoverFeedback>,
     layout_worker: LayoutWorker,
+}
+
+struct DiscoverFeedback {
+    created_at: Instant,
+    message: &'static str,
+    details: Option<String>,
+    success: bool,
 }
 
 enum WorkerEvent {
@@ -46,6 +54,7 @@ enum WorkerEvent {
     RosUpdated {
         ros: RosSnapshot,
         raw_graph: GraphSnapshot,
+        middleware: MiddlewareStatus,
     },
     RosRefreshFailed(String),
 }
@@ -65,6 +74,7 @@ struct DashboardSnapshot {
     raw_graph: GraphSnapshot,
     graph: GraphSnapshot,
     layout: Option<LayoutedGraph>,
+    middleware: MiddlewareStatus,
     last_error: Option<String>,
     last_updated_label: Option<String>,
 }
@@ -156,10 +166,16 @@ impl DashboardPage {
 
     fn drain_discover_result(&mut self) {
         let Some(rx) = &self.discover_rx else { return };
-        if rx.try_recv().is_ok() {
-            self.discover_feedback = Some((Instant::now(), "Discovery triggered."));
-            self.discover_rx = None;
-        }
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err("discovery worker disconnected before returning a result".to_string())
+            }
+        };
+
+        self.discover_feedback = Some(discover_feedback(result));
+        self.discover_rx = None;
     }
 
     fn drain_worker_events(&mut self, graph_filter: &GraphFilter) {
@@ -173,8 +189,13 @@ impl DashboardPage {
                     self.snapshot.resources = resources;
                     self.snapshot.last_updated_label = Some(format_clock_label());
                 }
-                WorkerEvent::RosUpdated { ros, raw_graph } => {
+                WorkerEvent::RosUpdated {
+                    ros,
+                    raw_graph,
+                    middleware,
+                } => {
                     self.snapshot.ros = ros;
+                    self.snapshot.middleware = middleware;
                     let filtered = apply_filter(&raw_graph, graph_filter);
                     self.layout_worker.submit(filtered.clone());
                     self.snapshot.graph = filtered;
@@ -196,7 +217,11 @@ impl DashboardPage {
     }
 
     fn render_top_bar(&mut self, ctx: &egui::Context) {
-        if self.discover_feedback.is_some_and(|(t, _)| t.elapsed() > Duration::from_secs(3)) {
+        if self
+            .discover_feedback
+            .as_ref()
+            .is_some_and(|feedback| feedback.created_at.elapsed() > Duration::from_secs(3))
+        {
             self.discover_feedback = None;
         }
 
@@ -217,22 +242,36 @@ impl DashboardPage {
                         }
                         ui.add_space(8.0);
                         let busy = self.discover_rx.is_some();
-                        let btn = egui::Button::new(if busy { "Discovering..." } else { "Discover" })
-                            .corner_radius(egui::CornerRadius::same(6));
+                        let btn =
+                            egui::Button::new(if busy { "Discovering..." } else { "Discover" })
+                                .corner_radius(egui::CornerRadius::same(6));
                         if ui.add_enabled(!busy, btn).clicked() {
                             let (tx, rx) = mpsc::channel();
                             self.discover_rx = Some(rx);
                             thread::spawn(move || {
-                                let _ = crate::client::send_request(
+                                let result = crate::client::send_request(
                                     crate::command::protocol::CommandRequest::Discover(
-                                        crate::command::protocol::DiscoverRequest,
+                                        crate::command::protocol::DiscoverRequest::from_current_env(
+                                            Default::default(),
+                                        ),
                                     ),
-                                );
-                                let _ = tx.send(true);
+                                )
+                                .map_err(|error| error.to_string());
+                                let _ = tx.send(result);
                             });
                         }
-                        if let Some((_, msg)) = &self.discover_feedback {
-                            ui.label(egui::RichText::new(*msg).color(egui::Color32::from_rgb(80, 140, 80)));
+                        render_middleware_badges(ui, self.snapshot.middleware);
+                        if let Some(feedback) = &self.discover_feedback {
+                            let color = if feedback.success {
+                                egui::Color32::from_rgb(80, 140, 80)
+                            } else {
+                                egui::Color32::from_rgb(180, 65, 65)
+                            };
+                            let label =
+                                ui.label(egui::RichText::new(feedback.message).color(color));
+                            if let Some(details) = &feedback.details {
+                                label.on_hover_text(details);
+                            }
                         }
                     });
                 });
@@ -242,16 +281,12 @@ impl DashboardPage {
     fn render_body(&mut self, ctx: &egui::Context, graph_filter: &mut GraphFilter) {
         egui::TopBottomPanel::bottom("dashboard_resources")
             .resizable(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(PAGE_BG)
-                    .inner_margin(egui::Margin {
-                        left: 12,
-                        right: 12,
-                        top: 6,
-                        bottom: 12,
-                    }),
-            )
+            .frame(egui::Frame::new().fill(PAGE_BG).inner_margin(egui::Margin {
+                left: 12,
+                right: 12,
+                top: 6,
+                bottom: 12,
+            }))
             .show(ctx, |ui| {
                 dashboard_frame(ui, "Live System Resources", |ui| {
                     let now_secs = self.start_time.elapsed().as_secs_f64();
@@ -307,6 +342,34 @@ impl DashboardPage {
                     render_ros_graph(ui, self.snapshot.layout.as_ref(), &self.snapshot.graph);
                 });
             });
+    }
+}
+
+fn discover_feedback(result: Result<CommandResponse, String>) -> DiscoverFeedback {
+    let (success, details) = match result {
+        Ok(CommandResponse::Discover(response)) => {
+            let succeeded =
+                response.triggered && (response.rtps_triggered || response.zenoh_triggered);
+            let details = (!response.messages.is_empty()).then(|| response.messages.join("\n"));
+            (succeeded, details)
+        }
+        Ok(CommandResponse::Error(error)) => (false, Some(error.message)),
+        Ok(_) => (
+            false,
+            Some("server returned an unexpected response for discovery".to_string()),
+        ),
+        Err(error) => (false, Some(error)),
+    };
+
+    DiscoverFeedback {
+        created_at: Instant::now(),
+        message: if success {
+            "Discovery triggered."
+        } else {
+            "Discovery failed."
+        },
+        details,
+        success,
     }
 }
 
@@ -470,7 +533,8 @@ impl SystemSampler {
             tx_bytes = tx_bytes.saturating_add(fields[8].parse::<u64>().unwrap_or(0));
         }
 
-        self.net_counter_history.push_back((now, rx_bytes, tx_bytes));
+        self.net_counter_history
+            .push_back((now, rx_bytes, tx_bytes));
         prune_counter_window(&mut self.net_counter_history, now, RATE_WINDOW);
         Ok(())
     }
@@ -488,10 +552,8 @@ impl SystemSampler {
             return None;
         }
 
-        let rx_bytes_per_sec =
-            (newest_rx.saturating_sub(oldest_rx) as f32 / elapsed_secs).max(0.0);
-        let tx_bytes_per_sec =
-            (newest_tx.saturating_sub(oldest_tx) as f32 / elapsed_secs).max(0.0);
+        let rx_bytes_per_sec = (newest_rx.saturating_sub(oldest_rx) as f32 / elapsed_secs).max(0.0);
+        let tx_bytes_per_sec = (newest_tx.saturating_sub(oldest_tx) as f32 / elapsed_secs).max(0.0);
 
         Some(NetworkSample {
             rx_bytes_per_sec,
@@ -503,7 +565,11 @@ impl SystemSampler {
 /// Remove counter samples older than `now - window`, but always keep at least
 /// one entry so the next `.front()` call can compute a rate. The front entry
 /// is therefore at most `window + one_sample_interval` old.
-fn prune_counter_window<T>(history: &mut VecDeque<(Instant, T, T)>, now: Instant, window: Duration) {
+fn prune_counter_window<T>(
+    history: &mut VecDeque<(Instant, T, T)>,
+    now: Instant,
+    window: Duration,
+) {
     while history.len() > 1 {
         let front_time = history.front().unwrap().0;
         if now.saturating_duration_since(front_time) > window {
@@ -546,7 +612,11 @@ fn ros_worker_loop(tx: mpsc::Sender<WorkerEvent>) {
     loop {
         let started = Instant::now();
         let event = match collect_ros_snapshot() {
-            Ok((ros, raw_graph)) => WorkerEvent::RosUpdated { ros, raw_graph },
+            Ok((ros, raw_graph, middleware)) => WorkerEvent::RosUpdated {
+                ros,
+                raw_graph,
+                middleware,
+            },
             Err(error) => WorkerEvent::RosRefreshFailed(error.to_string()),
         };
         if tx.send(event).is_err() {
@@ -559,8 +629,8 @@ fn ros_worker_loop(tx: mpsc::Sender<WorkerEvent>) {
     }
 }
 
-fn collect_ros_snapshot() -> anyhow::Result<(RosSnapshot, GraphSnapshot)> {
-    let (topics, nodes, totals) = fetch_topic_graph().context("fetch topic graph")?;
+fn collect_ros_snapshot() -> anyhow::Result<(RosSnapshot, GraphSnapshot, MiddlewareStatus)> {
+    let (topics, nodes, totals, middleware) = fetch_topic_graph().context("fetch topic graph")?;
     let graph = build_graph_snapshot(&topics, &nodes);
     Ok((
         RosSnapshot {
@@ -570,6 +640,7 @@ fn collect_ros_snapshot() -> anyhow::Result<(RosSnapshot, GraphSnapshot)> {
             service_count: totals.services,
         },
         graph,
+        middleware,
     ))
 }
 
@@ -583,7 +654,12 @@ struct GraphTotals {
 
 /// Single-shot RPC to pull the full ROS graph. Replaces the previous
 /// N+2 sequential calls (TopicList + NodeList + per-topic TopicInfo).
-fn fetch_topic_graph() -> anyhow::Result<(Vec<TopicDetails>, Vec<NodeDetails>, GraphTotals)> {
+fn fetch_topic_graph() -> anyhow::Result<(
+    Vec<TopicDetails>,
+    Vec<NodeDetails>,
+    GraphTotals,
+    MiddlewareStatus,
+)> {
     match send_request(CommandRequest::TopicGraph(TopicGraphRequest {
         // GUI applies its own filters (tf/params/debug/leaf) — let the server
         // return every topic so the user can opt out of all filtering.
@@ -596,7 +672,7 @@ fn fetch_topic_graph() -> anyhow::Result<(Vec<TopicDetails>, Vec<NodeDetails>, G
                 actions: response.total_actions_count,
                 services: response.total_services_count,
             };
-            Ok((response.topics, response.nodes, totals))
+            Ok((response.topics, response.nodes, totals, response.middleware))
         }
         CommandResponse::Error(error) => anyhow::bail!(error.message),
         _ => anyhow::bail!("unexpected response for topic graph"),
@@ -604,7 +680,7 @@ fn fetch_topic_graph() -> anyhow::Result<(Vec<TopicDetails>, Vec<NodeDetails>, G
 }
 
 pub fn fetch_graph_snapshot() -> anyhow::Result<GraphSnapshot> {
-    let (topics, nodes, _) = fetch_topic_graph()?;
+    let (topics, nodes, _, _) = fetch_topic_graph()?;
     Ok(build_graph_snapshot(&topics, &nodes))
 }
 
@@ -619,9 +695,9 @@ fn build_graph_snapshot(topics: &[TopicDetails], nodes: &[NodeDetails]) -> Graph
                 .publishers
                 .iter()
                 .filter_map(|p| {
-                    p.node_name
-                        .as_ref()
-                        .map(|name| full_node_name(p.node_namespace.as_deref().unwrap_or("/"), name))
+                    p.node_name.as_ref().map(|name| {
+                        full_node_name(p.node_namespace.as_deref().unwrap_or("/"), name)
+                    })
                 })
                 .collect();
             v.sort();
@@ -633,9 +709,9 @@ fn build_graph_snapshot(topics: &[TopicDetails], nodes: &[NodeDetails]) -> Graph
                 .subscriptions
                 .iter()
                 .filter_map(|s| {
-                    s.node_name
-                        .as_ref()
-                        .map(|name| full_node_name(s.node_namespace.as_deref().unwrap_or("/"), name))
+                    s.node_name.as_ref().map(|name| {
+                        full_node_name(s.node_namespace.as_deref().unwrap_or("/"), name)
+                    })
                 })
                 .collect();
             v.sort();
@@ -667,9 +743,11 @@ fn build_graph_snapshot(topics: &[TopicDetails], nodes: &[NodeDetails]) -> Graph
         .filter(|full_name| !connected_nodes.contains(full_name.as_str()))
         .collect();
 
-    GraphSnapshot { topics: graph_topics, isolated_nodes }
+    GraphSnapshot {
+        topics: graph_topics,
+        isolated_nodes,
+    }
 }
-
 
 fn render_status_badge(ui: &mut egui::Ui, connection_status: ConnectionStatus) {
     let (label, color) = match connection_status {
@@ -688,6 +766,26 @@ fn render_status_badge(ui: &mut egui::Ui, connection_status: ConnectionStatus) {
         });
 }
 
+fn render_middleware_badges(ui: &mut egui::Ui, status: MiddlewareStatus) {
+    if status.zenoh {
+        render_middleware_badge(ui, "Zenoh", egui::Color32::from_rgb(76, 125, 198));
+    }
+    if status.dds {
+        render_middleware_badge(ui, "DDS", egui::Color32::from_rgb(79, 151, 112));
+    }
+}
+
+fn render_middleware_badge(ui: &mut egui::Ui, label: &str, color: egui::Color32) {
+    egui::Frame::new()
+        .fill(color.gamma_multiply(0.12))
+        .stroke(egui::Stroke::new(1.0, color.gamma_multiply(0.8)))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(8, 5))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(label).color(color).size(12.0).strong());
+        });
+}
+
 fn dashboard_frame(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     dashboard_frame_with_meta(ui, title, "", add_contents);
 }
@@ -700,7 +798,10 @@ fn dashboard_frame_with_meta(
 ) {
     egui::Frame::group(ui.style())
         .fill(egui::Color32::from_rgb(252, 253, 255))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(210, 217, 226)))
+        .stroke(egui::Stroke::new(
+            1.0,
+            egui::Color32::from_rgb(210, 217, 226),
+        ))
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
@@ -773,7 +874,8 @@ fn network_resource_section(
     ui.add_space(6.0);
 
     let peak = samples.iter().fold(0.0_f32, |peak, sample| {
-        peak.max(sample.rx_bytes_per_sec).max(sample.tx_bytes_per_sec)
+        peak.max(sample.rx_bytes_per_sec)
+            .max(sample.tx_bytes_per_sec)
     });
     let peak_mib = (peak / (1024.0 * 1024.0)).max(1.0 / 1024.0);
     let y_max_mib = nice_network_max_mib(peak_mib);
@@ -804,11 +906,7 @@ fn network_resource_section(
 
 fn draw_chart_frame(painter: &egui::Painter, rect: egui::Rect) {
     let graph_rect = graph_inner_rect(rect);
-    painter.rect_filled(
-        graph_rect,
-        4.0,
-        egui::Color32::from_rgb(247, 249, 252),
-    );
+    painter.rect_filled(graph_rect, 4.0, egui::Color32::from_rgb(247, 249, 252));
     painter.rect_stroke(
         graph_rect,
         4.0,
@@ -823,7 +921,10 @@ fn draw_grid_lines(painter: &egui::Painter, rect: egui::Rect, segments: usize) {
         let t = step as f32 / segments as f32;
         let y = graph_rect.bottom() - graph_rect.height() * t;
         painter.line_segment(
-            [egui::pos2(graph_rect.left(), y), egui::pos2(graph_rect.right(), y)],
+            [
+                egui::pos2(graph_rect.left(), y),
+                egui::pos2(graph_rect.right(), y),
+            ],
             egui::Stroke::new(1.0, egui::Color32::from_rgb(231, 235, 241)),
         );
     }
@@ -834,7 +935,10 @@ fn draw_time_guides(ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect) {
     for age_secs in (0..=60).step_by(10) {
         let x = graph_rect.right() - graph_rect.width() * (age_secs as f32 / 60.0);
         painter.line_segment(
-            [egui::pos2(x, graph_rect.top()), egui::pos2(x, graph_rect.bottom())],
+            [
+                egui::pos2(x, graph_rect.top()),
+                egui::pos2(x, graph_rect.bottom()),
+            ],
             egui::Stroke::new(1.0, egui::Color32::from_rgb(231, 235, 241)),
         );
         painter.text(
@@ -932,7 +1036,11 @@ fn build_visible_series_points(
 
     let age_to_x = |raw_age: f32| gr.right() - gr.width() * (raw_age / window);
     let val_to_y = |v: f32| {
-        let norm = if y_max > 0.0 { v.clamp(0.0, y_max) / y_max } else { 0.0 };
+        let norm = if y_max > 0.0 {
+            v.clamp(0.0, y_max) / y_max
+        } else {
+            0.0
+        };
         gr.bottom() - gr.height() * norm
     };
 
@@ -940,9 +1048,9 @@ fn build_visible_series_points(
         return vec![];
     }
 
-    let off_left = samples.iter().rposition(|&(time_secs, _)| {
-        age_to_x((now_secs - time_secs).max(0.0) as f32) < gr.left()
-    });
+    let off_left = samples
+        .iter()
+        .rposition(|&(time_secs, _)| age_to_x((now_secs - time_secs).max(0.0) as f32) < gr.left());
     let start = off_left.unwrap_or(0);
 
     let mut points = Vec::new();
@@ -963,7 +1071,10 @@ fn build_visible_series_points(
 fn graph_inner_rect(rect: egui::Rect) -> egui::Rect {
     egui::Rect::from_min_max(
         egui::pos2(rect.left() + LEFT_PADDING, rect.top() + TOP_PADDING),
-        egui::pos2(rect.right() - RIGHT_AXIS_WIDTH, rect.bottom() - BOTTOM_PADDING),
+        egui::pos2(
+            rect.right() - RIGHT_AXIS_WIDTH,
+            rect.bottom() - BOTTOM_PADDING,
+        ),
     )
 }
 
@@ -1066,4 +1177,57 @@ fn parse_meminfo_kb(line: &str) -> Option<u64> {
 
 fn kb_to_gb(kb: u64) -> f32 {
     kb as f32 / 1024.0 / 1024.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::protocol::{DiscoverResponse, ErrorResponse};
+
+    #[test]
+    fn discovery_feedback_reports_confirmed_trigger_as_success() {
+        let feedback = discover_feedback(Ok(CommandResponse::Discover(DiscoverResponse {
+            triggered: true,
+            rtps_triggered: true,
+            zenoh_triggered: false,
+            zenoh_tokens: 0,
+            messages: vec!["RTPS discovery triggered.".to_string()],
+        })));
+
+        assert!(feedback.success);
+        assert_eq!(feedback.message, "Discovery triggered.");
+        assert_eq!(
+            feedback.details.as_deref(),
+            Some("RTPS discovery triggered.")
+        );
+    }
+
+    #[test]
+    fn discovery_feedback_rejects_response_without_successful_method() {
+        let feedback = discover_feedback(Ok(CommandResponse::Discover(DiscoverResponse {
+            triggered: true,
+            rtps_triggered: false,
+            zenoh_triggered: false,
+            zenoh_tokens: 0,
+            messages: vec!["Zenoh liveliness refresh failed: unavailable".to_string()],
+        })));
+
+        assert!(!feedback.success);
+        assert_eq!(feedback.message, "Discovery failed.");
+        assert_eq!(
+            feedback.details.as_deref(),
+            Some("Zenoh liveliness refresh failed: unavailable")
+        );
+    }
+
+    #[test]
+    fn discovery_feedback_reports_request_error() {
+        let feedback = discover_feedback(Ok(CommandResponse::Error(ErrorResponse {
+            message: "runtime unavailable".to_string(),
+        })));
+
+        assert!(!feedback.success);
+        assert_eq!(feedback.message, "Discovery failed.");
+        assert_eq!(feedback.details.as_deref(), Some("runtime unavailable"));
+    }
 }

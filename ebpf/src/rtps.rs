@@ -1,9 +1,9 @@
 use aya_ebpf::programs::SkBuffContext;
 use ros2probe_common::{
-    TopicGid, RTPS_GUID_PREFIX_LEN, RTPS_GUID_PREFIX_OFFSET, RTPS_HEADER_LEN, RTPS_SIGNATURE,
+    RTPS_GUID_PREFIX_LEN, RTPS_GUID_PREFIX_OFFSET, RTPS_HEADER_LEN, RTPS_SIGNATURE,
     RTPS_SIGNATURE_OFFSET, RTPS_SUBMESSAGE_DATA, RTPS_SUBMESSAGE_DATA_FRAG,
     RTPS_WRITER_ENTITY_ID_LEN, RTPS_WRITER_ENTITY_ID_SEDP_PUBLICATIONS,
-    RTPS_WRITER_ENTITY_ID_SEDP_SUBSCRIPTIONS, RTPS_WRITER_ENTITY_ID_SPDP_PARTICIPANT,
+    RTPS_WRITER_ENTITY_ID_SEDP_SUBSCRIPTIONS, RTPS_WRITER_ENTITY_ID_SPDP_PARTICIPANT, TopicGid,
 };
 
 const RTPS_SCAN_SUBMESSAGES: usize = 4;
@@ -46,13 +46,22 @@ pub fn classify(ctx: &SkBuffContext, payload_offset: usize) -> Result<Option<Rtp
     let mut submessage_offset = payload_offset + RTPS_HEADER_LEN;
     let mut scan_count = 0usize;
     while scan_count < RTPS_SCAN_SUBMESSAGES {
-        let submessage_id = ctx.load::<u8>(submessage_offset).map_err(|err| err as i64)?;
-        let flags = ctx.load::<u8>(submessage_offset + 1).map_err(|err| err as i64)?;
-        let octets_0 = ctx.load::<u8>(submessage_offset + 2).map_err(|err| err as i64)?;
-        let octets_1 = ctx.load::<u8>(submessage_offset + 3).map_err(|err| err as i64)?;
+        let submessage_id = ctx
+            .load::<u8>(submessage_offset)
+            .map_err(|err| err as i64)?;
+        let flags = ctx
+            .load::<u8>(submessage_offset + 1)
+            .map_err(|err| err as i64)?;
+        let octets_0 = ctx
+            .load::<u8>(submessage_offset + 2)
+            .map_err(|err| err as i64)?;
+        let octets_1 = ctx
+            .load::<u8>(submessage_offset + 3)
+            .map_err(|err| err as i64)?;
 
         if submessage_id == RTPS_SUBMESSAGE_DATA || submessage_id == RTPS_SUBMESSAGE_DATA_FRAG {
-            let reader_entity_id = load_entity_id(ctx, submessage_offset, RTPS_SUBMESSAGE_READER_ID_OFFSET)?;
+            let reader_entity_id =
+                load_entity_id(ctx, submessage_offset, RTPS_SUBMESSAGE_READER_ID_OFFSET)?;
             let writer_entity_id = load_writer_entity_id(ctx, submessage_offset)?;
             let writer_gid = TopicGid::from_rtps_parts(guid_prefix, writer_entity_id);
             let reader_gid = TopicGid::from_rtps_parts(guid_prefix, reader_entity_id);

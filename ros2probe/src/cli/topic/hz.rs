@@ -1,4 +1,4 @@
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use clap::Args;
 use tokio::runtime::Runtime;
 
@@ -79,21 +79,24 @@ fn print_status(response: crate::command::protocol::TopicHzStatusResponse) {
         return;
     }
 
-    let (Some(average_rate_hz), Some(min_period_seconds), Some(max_period_seconds), Some(std_dev_seconds)) = (
+    let (
+        Some(average_rate_hz),
+        Some(min_period_seconds),
+        Some(max_period_seconds),
+        Some(std_dev_seconds),
+    ) = (
         response.average_rate_hz,
         response.min_period_seconds,
         response.max_period_seconds,
         response.std_dev_seconds,
-    ) else {
+    )
+    else {
         return;
     };
 
     println!("average rate: {:.3}", average_rate_hz);
     println!(
         "\tmin: {:.3}s max: {:.3}s std dev: {:.5}s window: {}",
-        min_period_seconds,
-        max_period_seconds,
-        std_dev_seconds,
-        response.window,
+        min_period_seconds, max_period_seconds, std_dev_seconds, response.window,
     );
 }

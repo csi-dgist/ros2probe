@@ -3,6 +3,7 @@ use ros2probe_common::TopicGid;
 
 use ros2probe_common::RTPS_PARTICIPANT_ENTITY_ID;
 
+use crate::discovery::{EndpointId, ParticipantId};
 use crate::protocols::rtps::{
     DiscoveryKind as NewDiscoveryKind, RtpsEvent, RtpsMessage as NewRtpsMessage,
     RtpsMessageKind as NewRtpsMessageKind,
@@ -33,12 +34,16 @@ pub enum DiscoverySample {
     Subscription(DiscoveredEndpoint),
     UnknownBuiltin(DiscoveredUnknown),
     /// A participant or endpoint announced its own removal via PID_STATUS_INFO disposal.
-    Disposed { kind: DiscoveryBuiltinKind, gid: TopicGid },
+    Disposed {
+        kind: DiscoveryBuiltinKind,
+        gid: TopicGid,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DiscoveredParticipant {
     pub guid: Option<TopicGid>,
+    pub participant_id: Option<ParticipantId>,
     pub lease_duration: Option<DurationValue>,
     pub default_unicast_locators: Vec<Locator>,
     pub metatraffic_unicast_locators: Vec<Locator>,
@@ -48,15 +53,20 @@ pub struct DiscoveredParticipant {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DiscoveredEndpoint {
     pub endpoint_gid: Option<TopicGid>,
+    pub endpoint_id: Option<EndpointId>,
     pub participant_gid: Option<TopicGid>,
+    pub participant_id: Option<ParticipantId>,
     pub topic_name: Option<String>,
     pub type_name: Option<String>,
+    pub type_hash: Option<String>,
+    pub history: Option<HistoryQos>,
     pub reliability: Option<ReliabilityQos>,
     pub durability: Option<DurabilityQos>,
     pub deadline: Option<DurationValue>,
     pub latency_budget: Option<DurationValue>,
     pub lifespan: Option<DurationValue>,
     pub liveliness: Option<LivelinessQos>,
+    pub liveliness_lease_duration: Option<DurationValue>,
     pub unicast_locators: Vec<Locator>,
     pub multicast_locators: Vec<Locator>,
 }
@@ -86,6 +96,12 @@ pub struct Locator {
     pub kind: i32,
     pub port: u32,
     pub address: [u8; 16],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HistoryQos {
+    pub kind: u32,
+    pub depth: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -304,10 +320,7 @@ fn parse_participant_body(
     Ok(out)
 }
 
-fn parse_endpoint_body(
-    payload: &[u8],
-    little_endian: bool,
-) -> anyhow::Result<DiscoveredEndpoint> {
+fn parse_endpoint_body(payload: &[u8], little_endian: bool) -> anyhow::Result<DiscoveredEndpoint> {
     let mut out = DiscoveredEndpoint::default();
     iter_parameters(payload, little_endian, |id, value| {
         match id {
@@ -339,7 +352,9 @@ fn parse_endpoint_body(
                 out.lifespan = Some(parse_duration(value, little_endian)?);
             }
             PID_LIVELINESS => {
-                out.liveliness = Some(parse_liveliness(value, little_endian)?);
+                let liveliness = parse_liveliness(value, little_endian)?;
+                out.liveliness_lease_duration = Some(liveliness.lease_duration);
+                out.liveliness = Some(liveliness);
             }
             PID_UNICAST_LOCATOR => {
                 out.unicast_locators

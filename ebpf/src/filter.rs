@@ -17,7 +17,9 @@ const IPV4_MIN_HDR_LEN: usize = 20;
 const IPV6_HDR_LEN: usize = 40;
 const IPV4_FLAG_MORE_FRAGMENTS: u16 = 0x2000;
 const IPV4_FRAGMENT_OFFSET_MASK: u16 = 0x1fff;
+const IPPROTO_TCP: u8 = 6;
 const IPPROTO_UDP: u8 = 17;
+const TCP_HDR_LEN: usize = 20;
 const UDP_HDR_LEN: usize = 8;
 const IPV6_NEXT_HEADER_HOP_BY_HOP: u8 = 0;
 const IPV6_NEXT_HEADER_ROUTING: u8 = 43;
@@ -30,6 +32,7 @@ const IPV6_NEXT_HEADER_NO_NEXT: u8 = 59;
 #[derive(Clone, Copy)]
 struct IpPacket {
     l4_offset: usize,
+    protocol: u8,
     fragmented: bool,
     /// Raw fragment-offset field in **8-byte blocks** (both IPv4 and IPv6 use
     /// 8-byte-unit offsets). `0` for the first fragment of a datagram or for
@@ -43,7 +46,16 @@ struct IpPacket {
 }
 
 #[derive(Clone, Copy)]
-struct UdpHeader;
+struct UdpHeader {
+    src_port: u16,
+    dst_port: u16,
+}
+
+#[derive(Clone, Copy)]
+struct TcpHeader {
+    src_port: u16,
+    dst_port: u16,
+}
 
 pub fn run(ctx: &SkBuffContext) -> Result<i64, i64> {
     let packet = match parse_ip_packet(ctx)? {
@@ -51,41 +63,26 @@ pub fn run(ctx: &SkBuffContext) -> Result<i64, i64> {
         None => return Ok(0),
     };
 
-    // Middle / trailing fragment (offset > 0): no UDP or RTPS header is
-    // present, so we cannot classify the payload. Decide purely by the
-    // per-datagram approval map that the first fragment populated.
+    // Middle / trailing fragment (offset > 0): no L4 header is present, so we
+    // cannot classify the payload. Decide purely by the per-datagram approval
+    // map that the first fragment populated.
     if packet.fragmented && packet.fragment_offset > 0 {
         let approved = maps::frag_flow_approved(&packet.frag_key);
         if approved && !packet.more_fragments {
             // Last fragment of an approved datagram — clean up the entry.
             maps::frag_flow_forget(&packet.frag_key);
         }
-        return if approved { Ok(ctx.len() as i64) } else { Ok(0) };
+        return if approved {
+            Ok(ctx.len() as i64)
+        } else {
+            Ok(0)
+        };
     }
 
-    // Non-fragmented datagram OR first fragment of a fragmented datagram.
-    // Both carry the UDP + RTPS headers at the expected offsets, so the
-    // classifier can inspect them normally.
-    let _udp = match parse_udp(ctx, &packet)? {
-        Some(udp) => udp,
-        None => return Ok(0),
-    };
-
-    let payload_offset = packet.l4_offset + UDP_HDR_LEN;
-    let route = match rtps::classify(ctx, payload_offset)? {
-        Some(route) => route,
-        None => return Ok(0),
-    };
-
-    let pass_to_userspace = if route.is_discovery {
-        true
-    } else if !route.has_writer_gid && !route.has_reader_gid {
-        false
-    } else {
-        matches!(route.has_writer_gid, true)
-            && matches!(maps::gid_state(&route.writer_gid), Some(TOPIC_GID_STATE_AVAILABLE))
-            || matches!(route.has_reader_gid, true)
-                && matches!(maps::gid_state(&route.reader_gid), Some(TOPIC_GID_STATE_AVAILABLE))
+    let pass_to_userspace = match packet.protocol {
+        IPPROTO_UDP => classify_udp(ctx, &packet)?,
+        IPPROTO_TCP => classify_tcp(ctx, &packet)?,
+        _ => false,
     };
 
     // If this is the first fragment of a soon-to-be-split datagram and we
@@ -132,14 +129,12 @@ fn parse_ipv4(ctx: &SkBuffContext, l3_offset: usize) -> Result<Option<IpPacket>,
     }
 
     let protocol = ctx.load::<u8>(l3_offset + 9).map_err(|err| err as i64)?;
-    if protocol != IPPROTO_UDP {
+    if !matches!(protocol, IPPROTO_TCP | IPPROTO_UDP) {
         return Ok(None);
     }
 
-    let identification =
-        u16::from_be(ctx.load::<u16>(l3_offset + 4).map_err(|err| err as i64)?);
-    let fragment_bits =
-        u16::from_be(ctx.load::<u16>(l3_offset + 6).map_err(|err| err as i64)?);
+    let identification = u16::from_be(ctx.load::<u16>(l3_offset + 4).map_err(|err| err as i64)?);
+    let fragment_bits = u16::from_be(ctx.load::<u16>(l3_offset + 6).map_err(|err| err as i64)?);
     let fragment_offset = fragment_bits & IPV4_FRAGMENT_OFFSET_MASK;
     let more_fragments = (fragment_bits & IPV4_FLAG_MORE_FRAGMENTS) != 0;
     let fragmented = fragment_offset != 0 || more_fragments;
@@ -164,6 +159,7 @@ fn parse_ipv4(ctx: &SkBuffContext, l3_offset: usize) -> Result<Option<IpPacket>,
 
     Ok(Some(IpPacket {
         l4_offset: l3_offset + header_len,
+        protocol,
         fragmented,
         fragment_offset,
         more_fragments,
@@ -191,9 +187,10 @@ fn parse_ipv6(ctx: &SkBuffContext, l3_offset: usize) -> Result<Option<IpPacket>,
 
     for _ in 0..4 {
         match next_header {
-            IPPROTO_UDP => {
+            IPPROTO_TCP | IPPROTO_UDP => {
                 return Ok(Some(IpPacket {
                     l4_offset: offset,
+                    protocol: next_header,
                     fragmented: false,
                     fragment_offset: 0,
                     more_fragments: false,
@@ -201,7 +198,7 @@ fn parse_ipv6(ctx: &SkBuffContext, l3_offset: usize) -> Result<Option<IpPacket>,
                         src_ip,
                         dst_ip,
                         identification: 0,
-                        protocol: IPPROTO_UDP as u32,
+                        protocol: next_header as u32,
                     },
                 }));
             }
@@ -229,6 +226,7 @@ fn parse_ipv6(ctx: &SkBuffContext, l3_offset: usize) -> Result<Option<IpPacket>,
                 if fragmented {
                     return Ok(Some(IpPacket {
                         l4_offset: offset,
+                        protocol: ext_next,
                         fragmented: true,
                         fragment_offset,
                         more_fragments,
@@ -241,7 +239,7 @@ fn parse_ipv6(ctx: &SkBuffContext, l3_offset: usize) -> Result<Option<IpPacket>,
                     }));
                 }
                 // Non-fragmented packet with a Fragment extension header
-                // (offset=0 and MF=0). Keep walking headers to reach UDP.
+                // (offset=0 and MF=0). Keep walking headers to reach L4.
             }
             IPV6_NEXT_HEADER_AUTH => {
                 let ext_next = ctx.load::<u8>(offset).map_err(|err| err as i64)?;
@@ -267,24 +265,90 @@ fn read_ipv6_addr(ctx: &SkBuffContext, offset: usize) -> Result<[u8; 16], i64> {
     let b2 = w2.to_ne_bytes();
     let b3 = w3.to_ne_bytes();
     Ok([
-        b0[0], b0[1], b0[2], b0[3],
-        b1[0], b1[1], b1[2], b1[3],
-        b2[0], b2[1], b2[2], b2[3],
-        b3[0], b3[1], b3[2], b3[3],
+        b0[0], b0[1], b0[2], b0[3], b1[0], b1[1], b1[2], b1[3], b2[0], b2[1], b2[2], b2[3], b3[0],
+        b3[1], b3[2], b3[3],
     ])
+}
+
+fn classify_udp(ctx: &SkBuffContext, packet: &IpPacket) -> Result<bool, i64> {
+    let udp = match parse_udp(ctx, packet)? {
+        Some(udp) => udp,
+        None => return Ok(false),
+    };
+
+    if maps::zenoh_udp_port(udp.src_port) || maps::zenoh_udp_port(udp.dst_port) {
+        return Ok(true);
+    }
+
+    let payload_offset = packet.l4_offset + UDP_HDR_LEN;
+    let route = match rtps::classify(ctx, payload_offset)? {
+        Some(route) => route,
+        None => return Ok(false),
+    };
+
+    if route.is_discovery {
+        return Ok(true);
+    }
+    if !route.has_writer_gid && !route.has_reader_gid {
+        return Ok(false);
+    }
+
+    if route.has_writer_gid {
+        if let Some(state) = maps::gid_state(&route.writer_gid) {
+            if state == TOPIC_GID_STATE_AVAILABLE {
+                return Ok(true);
+            }
+        }
+    }
+
+    if route.has_reader_gid {
+        if let Some(state) = maps::gid_state(&route.reader_gid) {
+            if state == TOPIC_GID_STATE_AVAILABLE {
+                return Ok(true);
+            }
+        }
+    }
+
+    Ok(false)
+}
+
+fn classify_tcp(ctx: &SkBuffContext, packet: &IpPacket) -> Result<bool, i64> {
+    let tcp = match parse_tcp(ctx, packet)? {
+        Some(tcp) => tcp,
+        None => return Ok(false),
+    };
+
+    Ok(maps::zenoh_tcp_port(tcp.src_port) || maps::zenoh_tcp_port(tcp.dst_port))
 }
 
 fn parse_udp(ctx: &SkBuffContext, packet: &IpPacket) -> Result<Option<UdpHeader>, i64> {
     let udp_offset = packet.l4_offset;
+    let src_port = u16::from_be(ctx.load::<u16>(udp_offset).map_err(|err| err as i64)?);
+    let dst_port = u16::from_be(ctx.load::<u16>(udp_offset + 2).map_err(|err| err as i64)?);
     let length = u16::from_be(ctx.load::<u16>(udp_offset + 4).map_err(|err| err as i64)?);
 
     if length < UDP_HDR_LEN as u16 {
         return Ok(None);
     }
 
-    let _ = length;
+    Ok(Some(UdpHeader { src_port, dst_port }))
+}
 
-    Ok(Some(UdpHeader))
+fn parse_tcp(ctx: &SkBuffContext, packet: &IpPacket) -> Result<Option<TcpHeader>, i64> {
+    let tcp_offset = packet.l4_offset;
+    let src_port = u16::from_be(ctx.load::<u16>(tcp_offset).map_err(|err| err as i64)?);
+    let dst_port = u16::from_be(ctx.load::<u16>(tcp_offset + 2).map_err(|err| err as i64)?);
+    let data_offset_words = ctx.load::<u8>(tcp_offset + 12).map_err(|err| err as i64)? >> 4;
+    if data_offset_words < 5 {
+        return Ok(None);
+    }
+
+    let header_len = (data_offset_words as usize) * 4;
+    if header_len < TCP_HDR_LEN {
+        return Ok(None);
+    }
+
+    Ok(Some(TcpHeader { src_port, dst_port }))
 }
 
 fn parse_l3_offset(ctx: &SkBuffContext) -> Result<Option<(u16, usize)>, i64> {
@@ -292,13 +356,8 @@ fn parse_l3_offset(ctx: &SkBuffContext) -> Result<Option<(u16, usize)>, i64> {
     let mut ethertype = u16::from_be(ctx.load::<u16>(12).map_err(|err| err as i64)?);
 
     let mut remaining_tags = 2;
-    while remaining_tags > 0
-        && matches!(ethertype, ETH_P_8021Q | ETH_P_8021AD | ETH_P_8021QINQ)
-    {
-        ethertype = u16::from_be(
-            ctx.load::<u16>(offset + 2)
-                .map_err(|err| err as i64)?,
-        );
+    while remaining_tags > 0 && matches!(ethertype, ETH_P_8021Q | ETH_P_8021AD | ETH_P_8021QINQ) {
+        ethertype = u16::from_be(ctx.load::<u16>(offset + 2).map_err(|err| err as i64)?);
         offset += VLAN_HDR_LEN;
         remaining_tags -= 1;
     }

@@ -136,13 +136,21 @@ pub(super) fn bw_observe_message(
     message: &RtpsDataMessage,
     metadata: &RecorderTopicMetadata,
 ) {
+    bw_observe_topic_sample(session, &metadata.topic_name, message.payload.len());
+}
+
+pub(super) fn bw_observe_topic_sample(
+    session: Option<&mut TopicBwSession>,
+    topic_name: &str,
+    payload_len: usize,
+) {
     let Some(session) = session else { return };
-    if metadata.topic_name != session.topic_name {
+    if topic_name != session.topic_name {
         return;
     }
     session.samples.push_back(BwSamplePoint {
         observed_at: Instant::now(),
-        payload_len: message.payload.len(),
+        payload_len,
     });
     while session.samples.len() > session.window_size {
         session.samples.pop_front();
@@ -291,8 +299,12 @@ pub(super) fn hz_observe_message(
     _message: &RtpsDataMessage,
     metadata: &RecorderTopicMetadata,
 ) {
+    hz_observe_topic_sample(session, &metadata.topic_name);
+}
+
+pub(super) fn hz_observe_topic_sample(session: Option<&mut TopicHzSession>, topic_name: &str) {
     let Some(session) = session else { return };
-    if metadata.topic_name != session.topic_name {
+    if topic_name != session.topic_name {
         return;
     }
     let now = Instant::now();
@@ -464,6 +476,19 @@ pub(super) fn echo_observe_message(
     session.write_message_frames(metadata.type_name.as_deref(), lost_before, &message.payload);
 }
 
+pub(super) fn echo_observe_topic_sample(
+    session: Option<&mut TopicEchoSession>,
+    topic_name: &str,
+    type_name: Option<&str>,
+    payload: &[u8],
+) {
+    let Some(session) = session else { return };
+    if topic_name != session.topic_name {
+        return;
+    }
+    session.write_message_frames(type_name, 0, payload);
+}
+
 fn rtps_seq_num(bytes: &[u8; 8]) -> i64 {
     // RTPS SequenceNumber_t: int32 high + uint32 low (little-endian submessage body)
     let high = i32::from_le_bytes(bytes[0..4].try_into().unwrap()) as i64;
@@ -567,11 +592,16 @@ fn write_echo_frame(
 
 // ── topic delay ───────────────────────────────────────────────────────────────
 
+// A live transport delay beyond this bound cannot be distinguished from an
+// unsynchronized or simulation clock, so it must not enter latency statistics.
+const MAX_COMPARABLE_CLOCK_DELTA_NANOS: u64 = 60 * 60 * 1_000_000_000;
+
 pub(super) struct TopicDelaySession {
     topic_name: String,
     delays: VecDeque<f64>,
     window_size: usize,
     missing_header: bool,
+    clock_mismatch: bool,
 }
 
 pub(super) fn delay_start_session(
@@ -595,6 +625,7 @@ pub(super) fn delay_start_session(
         delays: VecDeque::with_capacity(request.window_size.min(1024)),
         window_size: request.window_size,
         missing_header: false,
+        clock_mismatch: false,
     });
     Ok(TopicDelayStartResponse {
         topic_name: request.topic_name,
@@ -610,6 +641,7 @@ pub(super) fn delay_build_status_response(
             topic_name: None,
             stats: None,
             missing_header: false,
+            clock_mismatch: false,
             messages: Vec::new(),
         };
     };
@@ -619,6 +651,7 @@ pub(super) fn delay_build_status_response(
         topic_name: Some(session.topic_name.clone()),
         stats,
         missing_header: session.missing_header,
+        clock_mismatch: session.clock_mismatch,
         messages: Vec::new(),
     }
 }
@@ -647,14 +680,40 @@ pub(super) fn delay_observe_message(
     if metadata.topic_name != session.topic_name {
         return;
     }
-    let Ok(received_at_nanos) = system_time_to_nanos(message.socket_timestamp) else {
+    delay_observe_payload(session, message.socket_timestamp, &message.payload);
+}
+
+pub(super) fn delay_observe_topic_sample(
+    session: Option<&mut TopicDelaySession>,
+    topic_name: &str,
+    received_at: SystemTime,
+    payload: &[u8],
+) {
+    let Some(session) = session else { return };
+    if topic_name != session.topic_name {
+        return;
+    }
+    delay_observe_payload(session, received_at, payload);
+}
+
+fn delay_observe_payload(session: &mut TopicDelaySession, received_at: SystemTime, payload: &[u8]) {
+    let Ok(received_at_nanos) = system_time_to_nanos(received_at) else {
         return;
     };
 
-    let Some(stamp_nanos) = parse_cdr_stamp_nanos(&message.payload) else {
+    let Some(stamp_nanos) = parse_cdr_stamp_nanos(payload) else {
         session.missing_header = true;
         return;
     };
+
+    if stamp_nanos == 0
+        || received_at_nanos.abs_diff(stamp_nanos) > MAX_COMPARABLE_CLOCK_DELTA_NANOS
+    {
+        session.delays.clear();
+        session.clock_mismatch = true;
+        return;
+    }
+    session.clock_mismatch = false;
 
     let delay_ms = if received_at_nanos >= stamp_nanos {
         (received_at_nanos - stamp_nanos) as f64 / 1_000_000.0
@@ -679,6 +738,10 @@ pub(super) fn delay_build_stats_response(
 ) -> Option<TopicDelayStats> {
     let session = session?;
     delay_stats_from_samples(&session.delays)
+}
+
+pub(super) fn delay_has_clock_mismatch(session: Option<&TopicDelaySession>) -> bool {
+    session.is_some_and(|session| session.clock_mismatch)
 }
 
 fn delay_stats_from_samples(delays: &VecDeque<f64>) -> Option<TopicDelayStats> {
@@ -746,4 +809,74 @@ fn parse_cdr_stamp_nanos(payload: &[u8]) -> Option<u64> {
         return None;
     }
     Some(sec as u64 * 1_000_000_000 + nanosec as u64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn delay_session() -> TopicDelaySession {
+        let mut session = None;
+        delay_start_session(
+            TopicDelayStartRequest {
+                topic_name: "/scan".to_string(),
+                window_size: 10,
+            },
+            &mut session,
+        )
+        .unwrap();
+        session.unwrap()
+    }
+
+    fn cdr_stamp(sec: u32, nanosec: u32) -> Vec<u8> {
+        let mut payload = vec![0x00, 0x01, 0x00, 0x00];
+        payload.extend_from_slice(&sec.to_le_bytes());
+        payload.extend_from_slice(&nanosec.to_le_bytes());
+        payload
+    }
+
+    #[test]
+    fn delay_accepts_stamp_from_capture_wall_clock() {
+        let mut session = delay_session();
+        let received_at =
+            UNIX_EPOCH + Duration::from_secs(1_700_000_000) + Duration::from_millis(25);
+
+        delay_observe_payload(
+            &mut session,
+            received_at,
+            &cdr_stamp(1_700_000_000, 20_000_000),
+        );
+
+        let stats = delay_build_stats_response(Some(&session)).unwrap();
+        assert_eq!(stats.avg_ms, 5.0);
+        assert!(!delay_has_clock_mismatch(Some(&session)));
+    }
+
+    #[test]
+    fn delay_rejects_sim_time_clock_domain_and_clears_stats() {
+        let mut session = delay_session();
+        let received_at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        delay_observe_payload(
+            &mut session,
+            received_at + Duration::from_millis(5),
+            &cdr_stamp(1_700_000_000, 0),
+        );
+        assert!(delay_build_stats_response(Some(&session)).is_some());
+
+        delay_observe_payload(&mut session, received_at, &cdr_stamp(123, 0));
+
+        assert!(delay_build_stats_response(Some(&session)).is_none());
+        assert!(delay_has_clock_mismatch(Some(&session)));
+    }
+
+    #[test]
+    fn delay_rejects_zero_stamp() {
+        let mut session = delay_session();
+        let received_at = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+
+        delay_observe_payload(&mut session, received_at, &cdr_stamp(0, 0));
+
+        assert!(delay_build_stats_response(Some(&session)).is_none());
+        assert!(delay_has_clock_mismatch(Some(&session)));
+    }
 }

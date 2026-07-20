@@ -4,8 +4,8 @@ use std::time::Duration;
 use anyhow::{Context, bail};
 
 use crate::{
-    runtime::{RuntimeCommand, RuntimeReply},
     command::protocol::{BagStopRequest, BagStopResponse},
+    runtime::{RuntimeCommand, RuntimeReply},
 };
 
 const RUNTIME_COMMAND_TIMEOUT: Duration = Duration::from_secs(5);

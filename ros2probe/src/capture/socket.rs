@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use netring::{
-    AfPacketRx, AfPacketRxBuilder, Packet as NetringPacket, PacketDirection as NetringPacketDirection,
-    PacketSource, TimestampSource,
+    AfPacketRx, AfPacketRxBuilder, Packet as NetringPacket,
+    PacketDirection as NetringPacketDirection, PacketSource, TimestampSource,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

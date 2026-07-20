@@ -115,7 +115,10 @@ fn is_internal_topic(topic: &TopicInfo) -> bool {
     if name == "/rosout" || name.ends_with("/parameter_events") {
         return true;
     }
-    if name.split('/').any(|seg| !seg.is_empty() && seg.starts_with('_')) {
+    if name
+        .split('/')
+        .any(|seg| !seg.is_empty() && seg.starts_with('_'))
+    {
         return true;
     }
     if topic.subscription_count == 0 {

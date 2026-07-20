@@ -3,7 +3,9 @@ use clap::Args;
 
 use crate::{
     client::send_request,
-    command::protocol::{CommandRequest, CommandResponse, TopicDetails, TopicEndpointInfo, TopicInfoRequest},
+    command::protocol::{
+        CommandRequest, CommandResponse, TopicDetails, TopicEndpointInfo, TopicInfoRequest,
+    },
 };
 
 #[derive(Debug, Args)]
@@ -36,7 +38,9 @@ pub fn run(args: TopicInfoCommand) -> anyhow::Result<()> {
 
 fn print_topic_info(topic: &TopicDetails, verbose: bool) {
     println!("Type: {}", format_types(&topic.type_names));
-    if verbose {println!();}
+    if verbose {
+        println!();
+    }
     println!("Publisher count: {}", topic.publisher_count);
 
     if verbose && !topic.publishers.is_empty() {
@@ -68,34 +72,37 @@ fn print_endpoint(endpoint: &TopicEndpointInfo) {
     }
     println!("Endpoint type: {}", endpoint.endpoint_type);
     println!("GID: {}", endpoint.gid);
-    println!("QoS profile:");
-    println!(
-        "  Reliability: {}",
-        endpoint.reliability.as_deref().unwrap_or("UNKNOWN")
-    );
-    println!(
-        "  Durability: {}",
-        endpoint.durability.as_deref().unwrap_or("UNKNOWN")
-    );
-    println!(
-        "  Lifespan: {}",
-        endpoint.lifespan.as_deref().unwrap_or("UNKNOWN")
-    );
-    println!(
-        "  Deadline: {}",
-        endpoint.deadline.as_deref().unwrap_or("UNKNOWN")
-    );
-    println!(
-        "  Liveliness: {}",
-        endpoint.liveliness.as_deref().unwrap_or("UNKNOWN")
-    );
-    println!(
-        "  Liveliness lease duration: {}",
-        endpoint
-            .liveliness_lease_duration
-            .as_deref()
-            .unwrap_or("UNKNOWN")
-    );
+    if endpoint.reliability.is_some()
+        || endpoint.history.is_some()
+        || endpoint.durability.is_some()
+        || endpoint.lifespan.is_some()
+        || endpoint.deadline.is_some()
+        || endpoint.liveliness.is_some()
+        || endpoint.liveliness_lease_duration.is_some()
+    {
+        println!("QoS profile:");
+        if let Some(value) = &endpoint.reliability {
+            println!("  Reliability: {value}");
+        }
+        if let Some(value) = &endpoint.history {
+            println!("  History (Depth): {value}");
+        }
+        if let Some(value) = &endpoint.durability {
+            println!("  Durability: {value}");
+        }
+        if let Some(value) = &endpoint.lifespan {
+            println!("  Lifespan: {value}");
+        }
+        if let Some(value) = &endpoint.deadline {
+            println!("  Deadline: {value}");
+        }
+        if let Some(value) = &endpoint.liveliness {
+            println!("  Liveliness: {value}");
+        }
+        if let Some(value) = &endpoint.liveliness_lease_duration {
+            println!("  Liveliness lease duration: {value}");
+        }
+    }
     println!();
 }
 
