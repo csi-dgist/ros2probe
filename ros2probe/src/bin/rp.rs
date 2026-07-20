@@ -63,7 +63,11 @@ enum Command {
 #[derive(Debug, Args)]
 struct RunCommand {
     /// Zenoh transport port(s) to capture for both TCP and UDP. Replaces the default 7447 when set.
-    #[arg(long = "zenoh-transport-port", value_name = "PORT")]
+    #[arg(
+        long = "zenoh-transport-port",
+        value_name = "PORT",
+        num_args = 1..
+    )]
     zenoh_transport_ports: Vec<u16>,
 }
 
@@ -250,5 +254,39 @@ fn main() -> anyhow::Result<()> {
         Command::Service {
             command: ServiceSubcommand::Type(args),
         } => ros2probe::cli::service::r#type::run(args),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_accepts_multiple_ports_after_one_option() {
+        let cli =
+            Cli::try_parse_from(["rp", "run", "--zenoh-transport-port", "7447", "7448"]).unwrap();
+
+        let Command::Run(run) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(run.zenoh_transport_ports, [7447, 7448]);
+    }
+
+    #[test]
+    fn run_keeps_repeated_port_option_compatible() {
+        let cli = Cli::try_parse_from([
+            "rp",
+            "run",
+            "--zenoh-transport-port",
+            "7447",
+            "--zenoh-transport-port",
+            "7448",
+        ])
+        .unwrap();
+
+        let Command::Run(run) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(run.zenoh_transport_ports, [7447, 7448]);
     }
 }
