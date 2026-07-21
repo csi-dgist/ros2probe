@@ -368,6 +368,16 @@ fn parse_endpoint_body(payload: &[u8], little_endian: bool) -> anyhow::Result<Di
         }
         Ok(())
     })?;
+
+    // The endpoint GUID already carries its participant's 12-byte GUID prefix.
+    // Cyclone DDS omits the redundant PID_PARTICIPANT_GUID from SEDP samples,
+    // so reconstruct it to keep the endpoint tied to SPDP lease refreshes.
+    if out.participant_gid.is_none() {
+        out.participant_gid = out.endpoint_gid.map(|endpoint_gid| {
+            TopicGid::from_rtps_parts(endpoint_gid.guid_prefix(), RTPS_PARTICIPANT_ENTITY_ID)
+        });
+    }
+
     Ok(out)
 }
 
@@ -478,5 +488,62 @@ fn read_i32(bytes: &[u8], little_endian: bool) -> i32 {
         i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
     } else {
         i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, SystemTime};
+
+    use crate::discovery::{DiscoveryChange, DiscoveryTable};
+
+    use super::*;
+
+    #[test]
+    fn cyclone_endpoint_infers_participant_and_tracks_its_lease() {
+        let endpoint_gid = TopicGid::new([
+            0x01, 0x10, 0x0d, 0x46, 0xce, 0x4e, 0x17, 0x5a, 0x24, 0xab, 0xb1, 0xf4, 0x00, 0x00,
+            0x17, 0x03,
+        ]);
+        let participant_gid =
+            TopicGid::from_rtps_parts(endpoint_gid.guid_prefix(), RTPS_PARTICIPANT_ENTITY_ID);
+        let endpoint = parse_endpoint_body(&endpoint_payload(endpoint_gid), true).unwrap();
+
+        assert_eq!(endpoint.participant_gid, Some(participant_gid));
+
+        let observed_at = SystemTime::UNIX_EPOCH;
+        let mut table = DiscoveryTable::new(Duration::from_secs(1));
+        assert_eq!(
+            table.apply_sample(
+                DiscoverySample::Participant(DiscoveredParticipant {
+                    guid: Some(participant_gid),
+                    lease_duration: Some(DurationValue {
+                        seconds: 5,
+                        fraction: 0,
+                    }),
+                    ..DiscoveredParticipant::default()
+                }),
+                observed_at,
+            ),
+            DiscoveryChange::Inserted
+        );
+        assert_eq!(
+            table.apply_sample(DiscoverySample::Publication(endpoint), observed_at),
+            DiscoveryChange::Inserted
+        );
+
+        let stats = table.expire_stale(observed_at + Duration::from_secs(2));
+        assert_eq!(stats.publications_removed, 0);
+        assert_eq!(table.publications().len(), 1);
+    }
+
+    fn endpoint_payload(endpoint_gid: TopicGid) -> Vec<u8> {
+        let mut payload = vec![0x00, 0x03, 0x00, 0x00];
+        payload.extend_from_slice(&PID_ENDPOINT_GUID.to_le_bytes());
+        payload.extend_from_slice(&(endpoint_gid.bytes.len() as u16).to_le_bytes());
+        payload.extend_from_slice(&endpoint_gid.bytes);
+        payload.extend_from_slice(&PID_SENTINEL.to_le_bytes());
+        payload.extend_from_slice(&0u16.to_le_bytes());
+        payload
     }
 }

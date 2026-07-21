@@ -9,6 +9,8 @@ use crate::{
     },
 };
 
+use super::full_node_name;
+
 #[derive(Debug, Args)]
 pub struct NodeInfoCommand {
     /// Name of the ROS node to get info for
@@ -64,12 +66,4 @@ fn print_endpoint_summary(endpoint: &NodeEndpointSummary) {
 
 fn print_service_summary(service: &NodeServiceInfo) {
     println!("    {}: {}", service.name, service.type_name);
-}
-
-fn full_node_name(namespace: &str, name: &str) -> String {
-    if namespace == "/" {
-        format!("/{name}")
-    } else {
-        format!("{namespace}/{name}")
-    }
 }
