@@ -6,6 +6,8 @@ use crate::{
     command::protocol::{CommandRequest, CommandResponse, NodeListRequest},
 };
 
+use super::full_node_name;
+
 #[derive(Debug, Args)]
 pub struct NodeListCommand {
     /// Only display the number of nodes discovered
@@ -26,7 +28,7 @@ pub fn run(args: NodeListCommand) -> anyhow::Result<()> {
             }
 
             for node in response.nodes {
-                println!("{}{}", node.namespace, node.name);
+                println!("{}", full_node_name(&node.namespace, &node.name));
             }
             Ok(())
         }

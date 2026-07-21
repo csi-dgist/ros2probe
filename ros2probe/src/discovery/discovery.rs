@@ -159,8 +159,8 @@ impl DiscoveryTable {
                 self.upsert_participant(participant, observed_at)
             }
             DiscoverySample::Publication(endpoint) => {
-                let expires_at =
-                    self.endpoint_expires_at(endpoint.participant_id.as_ref(), observed_at);
+                let participant_id = endpoint_participant_id(&endpoint);
+                let expires_at = self.endpoint_expires_at(participant_id.as_ref(), observed_at);
                 Self::upsert_endpoint(
                     &mut self.publications,
                     &mut self.publication_gid_index,
@@ -170,8 +170,8 @@ impl DiscoveryTable {
                 )
             }
             DiscoverySample::Subscription(endpoint) => {
-                let expires_at =
-                    self.endpoint_expires_at(endpoint.participant_id.as_ref(), observed_at);
+                let participant_id = endpoint_participant_id(&endpoint);
+                let expires_at = self.endpoint_expires_at(participant_id.as_ref(), observed_at);
                 Self::upsert_endpoint(
                     &mut self.subscriptions,
                     &mut self.subscription_gid_index,
@@ -546,6 +546,7 @@ impl DiscoveryTable {
         observed_at: SystemTime,
         expires_at: Option<SystemTime>,
     ) -> DiscoveryChange {
+        let participant_id = endpoint_participant_id(&endpoint);
         let endpoint_id = endpoint
             .endpoint_id
             .or_else(|| endpoint.endpoint_gid.map(EndpointId::rtps));
@@ -553,9 +554,6 @@ impl DiscoveryTable {
             return DiscoveryChange::Noop;
         };
         let endpoint_gid = endpoint.endpoint_gid.or_else(|| endpoint_id.rtps_gid());
-        let participant_id = endpoint
-            .participant_id
-            .or_else(|| endpoint.participant_gid.map(ParticipantId::rtps));
 
         match map.get_mut(&endpoint_id) {
             Some(entry) => {
@@ -912,4 +910,11 @@ fn duration_value_to_duration(value: DurationValue) -> Option<Duration> {
         return None;
     }
     Some(Duration::new(value.seconds as u64, value.fraction))
+}
+
+fn endpoint_participant_id(endpoint: &DiscoveredEndpoint) -> Option<ParticipantId> {
+    endpoint
+        .participant_id
+        .clone()
+        .or_else(|| endpoint.participant_gid.map(ParticipantId::rtps))
 }
