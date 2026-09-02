@@ -203,6 +203,10 @@ impl CaptureEngine {
         &mut self.socket
     }
 
+    pub fn socket_stats(&self) -> anyhow::Result<netring::CaptureStats> {
+        self.socket.stats()
+    }
+
     pub fn pump_once_blocking(&mut self, buffer: &mut CaptureBuffer) -> anyhow::Result<()> {
         let (socket, ip_frag) = (&mut self.socket, &mut self.ip_frag);
         let batch = socket.next_batch_blocking(Duration::from_millis(100))?;

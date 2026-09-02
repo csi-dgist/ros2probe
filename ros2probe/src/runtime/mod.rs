@@ -24,7 +24,10 @@ use aya::{
 };
 use log::{debug, trace, warn};
 use ros2probe_common::{MAX_FRAGMENT_FLOWS, MAX_ZENOH_PORTS};
-use tokio::{signal, time::Duration};
+use tokio::{
+    signal,
+    time::{Duration, Instant},
+};
 
 use crate::protocols::rtps::{RTPS_FRAGMENT_DEFRAG_TOTAL_CAPACITY, RtpsFragmentMemoryBudget};
 use crate::protocols::zenoh::{ZENOH_FRAGMENT_DEFRAG_TOTAL_CAPACITY, ZenohFragmentMemoryBudget};
@@ -58,7 +61,8 @@ use zenoh_shadow::{ZenohShadow, ZenohShadowSample};
 
 const CAPTURE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_DISCOVERY_SWEEP_INTERVAL: Duration = Duration::from_secs(1);
-const CAPTURE_EVENT_CHANNEL_CAPACITY: usize = 256;
+const CAPTURE_EVENT_CHANNEL_CAPACITY: usize = 1024;
+const CAPTURE_STATS_INTERVAL: Duration = Duration::from_secs(1);
 const ZENOH_SHADOW_CHANNEL_CAPACITY: usize = 4096;
 const RECENT_SAMPLE_CACHE_CAPACITY: usize = 65_536;
 const ZENOH_FLOW_INACTIVITY_TIMEOUT: Duration = Duration::from_secs(90);
@@ -1992,10 +1996,28 @@ fn spawn_capture_worker(
             MAX_FRAGMENT_FLOWS as usize,
             zenoh_fragment_budget,
         );
-        let mut dropped_event_batches = 0u64;
+        let mut backpressure_waits = 0u64;
+        let mut last_capture_stats = Instant::now();
         while !stop.load(Ordering::Relaxed) {
             match capture.pump_once_blocking(&mut buffer) {
                 Ok(()) => {
+                    if last_capture_stats.elapsed() >= CAPTURE_STATS_INTERVAL {
+                        match capture.socket_stats() {
+                            Ok(stats) if stats.drops > 0 || stats.freeze_count > 0 => {
+                                warn!(
+                                    "AF_PACKET capture pressure on interface {interface}: received={}, dropped={}, frozen={}",
+                                    stats.packets, stats.drops, stats.freeze_count
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(err) => {
+                                debug!(
+                                    "failed to read capture statistics on interface {interface}: {err:#}"
+                                );
+                            }
+                        }
+                        last_capture_stats = Instant::now();
+                    }
                     let expired_fragments = zenoh.expire_inactive_fragments();
                     if expired_fragments > 0 {
                         debug!(
@@ -2045,20 +2067,28 @@ fn spawn_capture_worker(
                     if events.is_empty() && zenoh_events.is_empty() {
                         continue;
                     }
-                    match capture_event_tx.try_send(CaptureWorkerEvent {
+                    let mut pending = CaptureWorkerEvent {
                         events,
                         zenoh_events,
-                    }) {
-                        Ok(()) => {}
-                        Err(mpsc::TrySendError::Full(_)) => {
-                            dropped_event_batches = dropped_event_batches.saturating_add(1);
-                            if dropped_event_batches.is_power_of_two() {
-                                warn!(
-                                    "capture event queue full on interface {interface}; dropped {dropped_event_batches} batch(es)"
-                                );
-                            }
+                    };
+                    loop {
+                        if stop.load(Ordering::Relaxed) {
+                            break;
                         }
-                        Err(mpsc::TrySendError::Disconnected(_)) => break,
+                        match capture_event_tx.try_send(pending) {
+                            Ok(()) => break,
+                            Err(mpsc::TrySendError::Full(event)) => {
+                                pending = event;
+                                backpressure_waits = backpressure_waits.saturating_add(1);
+                                if backpressure_waits.is_power_of_two() {
+                                    warn!(
+                                        "capture event queue backpressure on interface {interface}; waited {backpressure_waits} time(s) without dropping batches"
+                                    );
+                                }
+                                thread::sleep(Duration::from_millis(1));
+                            }
+                            Err(mpsc::TrySendError::Disconnected(_)) => return,
+                        }
                     }
                 }
                 Err(err) if is_interrupted_syscall(&err) => break,

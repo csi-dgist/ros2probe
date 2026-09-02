@@ -21,9 +21,23 @@ pub struct RtpsRoute {
     pub is_discovery: bool,
 }
 
-pub fn classify(ctx: &SkBuffContext, payload_offset: usize) -> Result<Option<RtpsRoute>, i64> {
+#[derive(Clone, Copy)]
+pub enum RtpsClassification {
+    Route(RtpsRoute),
+    NotRtps,
+    NoData,
+    /// The bounded kernel scan ended while another complete submessage header
+    /// remained. Pass the packet to user space so the full parser can decide.
+    Inconclusive,
+}
+
+pub fn classify(
+    ctx: &SkBuffContext,
+    payload_offset: usize,
+    payload_end: usize,
+) -> Result<RtpsClassification, i64> {
     if !has_signature(ctx, payload_offset)? {
-        return Ok(None);
+        return Ok(RtpsClassification::NotRtps);
     }
 
     // Load the 12-byte GUID prefix as 3x u32 (3 helper calls instead of 12).
@@ -65,7 +79,7 @@ pub fn classify(ctx: &SkBuffContext, payload_offset: usize) -> Result<Option<Rtp
             let writer_entity_id = load_writer_entity_id(ctx, submessage_offset)?;
             let writer_gid = TopicGid::from_rtps_parts(guid_prefix, writer_entity_id);
             let reader_gid = TopicGid::from_rtps_parts(guid_prefix, reader_entity_id);
-            return Ok(Some(RtpsRoute {
+            return Ok(RtpsClassification::Route(RtpsRoute {
                 writer_gid,
                 reader_gid,
                 has_writer_gid: true,
@@ -80,20 +94,29 @@ pub fn classify(ctx: &SkBuffContext, payload_offset: usize) -> Result<Option<Rtp
             u16::from_be_bytes([octets_0, octets_1])
         } as usize;
         if octets_to_next_header == 0 {
-            break;
+            return Ok(RtpsClassification::NoData);
         }
 
         submessage_offset += RTPS_SUBMESSAGE_HEADER_LEN + octets_to_next_header;
+        if !has_complete_submessage_header(submessage_offset, payload_end) {
+            return Ok(RtpsClassification::NoData);
+        }
         scan_count += 1;
     }
 
-    Ok(Some(RtpsRoute {
-        writer_gid: TopicGid::new([0; 16]),
-        reader_gid: TopicGid::new([0; 16]),
-        has_writer_gid: false,
-        has_reader_gid: false,
-        is_discovery: false,
-    }))
+    Ok(classify_bounded_scan_end(submessage_offset, payload_end))
+}
+
+fn has_complete_submessage_header(offset: usize, payload_end: usize) -> bool {
+    offset <= payload_end.saturating_sub(RTPS_SUBMESSAGE_HEADER_LEN)
+}
+
+fn classify_bounded_scan_end(offset: usize, payload_end: usize) -> RtpsClassification {
+    if has_complete_submessage_header(offset, payload_end) {
+        RtpsClassification::Inconclusive
+    } else {
+        RtpsClassification::NoData
+    }
 }
 
 fn has_signature(ctx: &SkBuffContext, payload_offset: usize) -> Result<bool, i64> {
@@ -128,4 +151,29 @@ fn is_discovery_writer(writer_entity_id: &[u8; 4]) -> bool {
     *writer_entity_id == RTPS_WRITER_ENTITY_ID_SPDP_PARTICIPANT
         || *writer_entity_id == RTPS_WRITER_ENTITY_ID_SEDP_PUBLICATIONS
         || *writer_entity_id == RTPS_WRITER_ENTITY_ID_SEDP_SUBSCRIPTIONS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remaining_submessage_after_scan_bound_is_inconclusive() {
+        assert!(matches!(
+            classify_bounded_scan_end(100, 104),
+            RtpsClassification::Inconclusive
+        ));
+    }
+
+    #[test]
+    fn exhausted_payload_after_scan_bound_has_no_more_data() {
+        assert!(matches!(
+            classify_bounded_scan_end(100, 103),
+            RtpsClassification::NoData
+        ));
+        assert!(matches!(
+            classify_bounded_scan_end(100, 100),
+            RtpsClassification::NoData
+        ));
+    }
 }

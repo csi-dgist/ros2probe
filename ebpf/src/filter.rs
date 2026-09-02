@@ -49,6 +49,7 @@ struct IpPacket {
 struct UdpHeader {
     src_port: u16,
     dst_port: u16,
+    length: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -281,9 +282,13 @@ fn classify_udp(ctx: &SkBuffContext, packet: &IpPacket) -> Result<bool, i64> {
     }
 
     let payload_offset = packet.l4_offset + UDP_HDR_LEN;
-    let route = match rtps::classify(ctx, payload_offset)? {
-        Some(route) => route,
-        None => return Ok(false),
+    let payload_end = packet.l4_offset + usize::from(udp.length);
+    let route = match rtps::classify(ctx, payload_offset, payload_end)? {
+        rtps::RtpsClassification::Route(route) => route,
+        rtps::RtpsClassification::Inconclusive => return Ok(true),
+        rtps::RtpsClassification::NotRtps | rtps::RtpsClassification::NoData => {
+            return Ok(false);
+        }
     };
 
     if route.is_discovery {
@@ -331,7 +336,11 @@ fn parse_udp(ctx: &SkBuffContext, packet: &IpPacket) -> Result<Option<UdpHeader>
         return Ok(None);
     }
 
-    Ok(Some(UdpHeader { src_port, dst_port }))
+    Ok(Some(UdpHeader {
+        src_port,
+        dst_port,
+        length,
+    }))
 }
 
 fn parse_tcp(ctx: &SkBuffContext, packet: &IpPacket) -> Result<Option<TcpHeader>, i64> {
