@@ -1,6 +1,6 @@
 # ros2probe
 
-[![Release](https://img.shields.io/badge/release-v0.2.0-blue)](https://github.com/csi-dgist/ros2probe/releases/latest)
+[![Release](https://img.shields.io/badge/release-v0.2.1-blue)](https://github.com/csi-dgist/ros2probe/releases/latest)
 [![License](https://img.shields.io/badge/license-Apache--2.0_%7C_GPL--2.0-blue.svg)](LICENSE)
 [![arXiv](https://img.shields.io/badge/arXiv-2606.10746-b31b1b.svg)](https://arxiv.org/abs/2606.10746)
 

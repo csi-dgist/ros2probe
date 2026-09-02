@@ -2,9 +2,12 @@ use std::time::Duration;
 
 use anyhow::Context;
 use netring::{
-    AfPacketRx, AfPacketRxBuilder, Packet as NetringPacket,
+    AfPacketRx, AfPacketRxBuilder, CaptureStats, Packet as NetringPacket,
     PacketDirection as NetringPacketDirection, PacketSource, TimestampSource,
 };
+
+const CAPTURE_RING_BLOCK_SIZE: usize = 256 * 1024;
+const CAPTURE_RING_BLOCK_COUNT: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PacketDirection {
@@ -35,11 +38,21 @@ pub struct CaptureSocket {
 
 impl CaptureSocket {
     pub fn open(interface: &str) -> anyhow::Result<Self> {
+        let is_loopback = interface == "lo";
         let inner = AfPacketRxBuilder::default()
             .interface(interface)
             .promiscuous(true)
-            .block_size(256 * 1024)
-            .block_count(8)
+            // Discovery storms can deliver hundreds of endpoint announcements
+            // in a fraction of a second. Keep enough kernel-side buffering for
+            // those bursts while preserving the existing block granularity.
+            .block_size(CAPTURE_RING_BLOCK_SIZE)
+            .block_count(CAPTURE_RING_BLOCK_COUNT)
+            // AF_PACKET exposes both the outgoing and host copy on loopback.
+            // The host copy contains the same RTPS datagram, so discarding the
+            // outgoing duplicate halves burst pressure without losing local
+            // discovery traffic. Physical interfaces must retain outgoing
+            // traffic so locally-originated discovery remains observable.
+            .ignore_outgoing(is_loopback)
             .timestamp_source(TimestampSource::Software)
             .build()
             .with_context(|| format!("create AF_PACKET socket for interface {interface}"))?;
@@ -48,6 +61,13 @@ impl CaptureSocket {
 
     pub fn as_mut_inner(&mut self) -> &mut AfPacketRx {
         &mut self.inner
+    }
+
+    /// Return and reset the kernel's packet counters for this socket.
+    pub fn stats(&self) -> anyhow::Result<CaptureStats> {
+        self.inner
+            .stats()
+            .context("read AF_PACKET socket statistics")
     }
 
     pub fn next_batch_blocking(
